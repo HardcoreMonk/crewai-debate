@@ -1,15 +1,15 @@
 ---
 name: crewai-debate
-description: "ALWAYS invoke this skill when the user's message matches the pattern `debate:` or `debate ` (anywhere on the first line), or any of: `crewai <topic>`, `start a debate on <topic>`, `iterate on <topic>`, `토론: <주제>`. MANDATORY FIRST STEP: load this file's body with the Read tool BEFORE producing any output — the skill was rewritten to v3 and the previous sessions' cached patterns (v1/v2 subagent-spawn, short status-line responses) are OBSOLETE and MUST NOT be replayed. v3 requires the FULL Dev↔Reviewer debate transcript to be emitted inside the current assistant response: one `### Developer — iter N` section followed by one `### Reviewer — iter N` section per iteration, ending with a `=== crewai-debate result ===` block. A one-line summary like 'Debate converged in N iterations' is INCORRECT v3 output — it means the body was not read. Do NOT call `sessions_spawn`. Read the SKILL.md body for exact format and persona frames."
+description: "ALWAYS invoke this skill when the user's message matches the pattern `debate:` or `debate ` (anywhere on the first line), or any of: `crewai <topic>`, `start a debate on <topic>`, `iterate on <topic>`, `토론: <주제>`. Runs a Dev↔Reviewer debate entirely within the current assistant turn via in-prompt role-switching. Load this file with the Read/Skill tool to get the exact output format and persona frames. Critical rules you MUST follow: (1) emit the full debate transcript — one `### Developer — iter N` section and one `### Reviewer — iter N` section per iteration, ending with a `=== crewai-debate result ===` block; (2) do NOT call `sessions_spawn`; (3) do NOT call ANY tool after emitting the debate transcript, including Bash for sidecar writes — any trailing tool call causes the delivery layer to drop the debate body and post only your trailing text, resulting in the user seeing only 'Debate converged…'; (4) a one-line summary is INCORRECT v3 output."
 ---
 
 # crewai-debate (v3, single-turn role-switching)
 
 ## Pre-execution checklist (read in order, DO NOT skip)
 
-1. Did you just match this skill from the description? Then you are reading this because you used the Read tool — good. If you are replying without having used Read on this file first, stop: your output will be wrong because the description alone does not specify the format.
-2. Are you about to emit a one-line status such as "Debate converged in N iterations" or "Sidecar archived"? That is **v2 behavior and is forbidden in v3**. v3 requires the full debate transcript in the assistant response (see "Output format" below). Correct yourself before emitting.
-3. Are you about to call `sessions_spawn`? Do NOT. v3 has no subagents. You personate Developer and Reviewer yourself, in sequential sections of the current assistant response.
+1. Are you about to emit a one-line status such as "Debate converged in N iterations" or "Sidecar archived"? That is **v2 behavior and is forbidden in v3**. v3 requires the full debate transcript in the assistant response (see "Output format" below). Correct yourself before emitting.
+2. Are you about to call `sessions_spawn`? Do NOT. v3 has no subagents. You personate Developer and Reviewer yourself, in sequential sections of the current assistant response.
+3. Are you about to call ANY tool AFTER emitting the debate? Do NOT. OpenClaw's channel delivery picks up only the final assistant text block of a multi-block response, so any trailing tool call (Bash, Read, etc.) causes the debate body to be dropped and only a short trailing summary to reach the user. The debate transcript must be the LAST thing you emit — nothing after.
 4. If the user's message does not contain a real topic (just a trigger keyword with no content), ask for a topic and stop — do not fabricate one.
 
 ## What this skill does
@@ -27,8 +27,6 @@ Extract from the user's kickoff message:
 
 If after stripping the prefix the topic is empty OR consists only of placeholder text like `<topic>`, `<주제>`, `...`, or whitespace — ask the user for a real topic and stop. Do NOT start the debate.
 
-Compute `slug` = lowercase alphanumeric prefix of `topic`, underscores for whitespace, truncated to 40 chars. Used only for the sidecar archive path: `/home/hardcoremonk/projects/crewai/state/debate-<slug>.json`.
-
 ## Execution model
 
 You personate **all** debate roles in one response. No `sessions_spawn`. Emit each iteration's Developer draft and Reviewer verdict as sequential sections of your assistant output. Users see the debate stream as it generates. Stop when either (a) the Reviewer returns `APPROVED`, or (b) `max_iter` iterations have completed.
@@ -36,6 +34,8 @@ You personate **all** debate roles in one response. No `sessions_spawn`. Emit ea
 Treat each role as a full context switch: when writing the Developer section, you are a senior UE C++ dev focused on shipping; when writing the Reviewer section, you are a strict reviewer with no investment in the prior draft. Do NOT soften the Reviewer to match the Developer — the debate's value is the adversarial signal.
 
 ## Output format
+
+This structure IS your assistant response. No other text may appear — not before, not after. Do NOT call any tool after producing this output (not Bash, not Read, nothing). The assistant response ends with the closing `===` line and that is all. If you call a tool after emitting this, the delivery layer may drop this response and post only whatever trailing text you produce after the tool — the user will see a short summary instead of the debate.
 
 Emit exactly this structure. Nothing before, nothing between sections except what's shown.
 
@@ -66,7 +66,6 @@ REQUEST_CHANGES:
 
 === crewai-debate result ===
 TOPIC: <topic>
-SLUG: <slug>
 STATUS: <CONVERGED | ESCALATED: max_iter reached without approval>
 ITERATIONS: <iters_run>/<max_iter>
 
@@ -80,8 +79,6 @@ HISTORY_SUMMARY:
 - iter 1: <one-line summary of reviewer iter 1 verdict>
 - iter 2: <...>
 - ...
-
-SIDECAR: /home/hardcoremonk/projects/crewai/state/debate-<slug>.json
 ===
 ```
 
@@ -102,29 +99,11 @@ These frames are internal reasoning, not part of the output. The output only con
 - **Converged:** Reviewer iter K returned `APPROVED`. Emit `STATUS: CONVERGED` and use iter K values in the final report.
 - **Escalated:** Completed `max_iter` iterations without `APPROVED`. Emit `STATUS: ESCALATED: max_iter reached without approval`.
 
-## Sidecar archive
+## No sidecar, no post-output tools
 
-After emitting the final report in your assistant output, write a one-shot sidecar JSON for archival / observability (not required for the skill to work — purely for the user's debugging). Use a single `bash` tool call:
+Earlier versions wrote a JSON sidecar via a Bash tool call after emitting the debate. That broke Discord delivery: OpenClaw's channel delivery layer picks up the FINAL assistant text block of a multi-block response, so the sidecar Bash call caused the debate text to be dropped and only a trailing confirmation ("Debate converged...") to be posted. v3.2 removes the sidecar entirely — the OpenClaw session transcript already preserves the debate, which is sufficient archive.
 
-```bash
-mkdir -p /home/hardcoremonk/projects/crewai/state
-cat > /home/hardcoremonk/projects/crewai/state/debate-<slug>.json <<'JSON'
-{
-  "topic": "<topic>",
-  "slug": "<slug>",
-  "max_iter": <N>,
-  "iter": <iters_run>,
-  "status": "<converged|escalated>",
-  "history": [
-    { "dev_draft": "<iter 1 draft>", "reviewer_verdict": "<iter 1 verdict>" },
-    ...
-  ],
-  "completed_at": "<ISO 8601 timestamp>"
-}
-JSON
-```
-
-If the bash tool is unavailable in this environment (e.g. when the skill runs through a channel binding without shell capability), skip the sidecar write — it's purely archival.
+**Do not reintroduce a sidecar write in this skill.** Any Bash / tool call AFTER the `=== crewai-debate result ===` closing line will cause delivery to drop the debate body.
 
 ## What this version does NOT do (by design)
 
