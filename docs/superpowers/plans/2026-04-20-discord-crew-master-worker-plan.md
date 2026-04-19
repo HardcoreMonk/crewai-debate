@@ -19,6 +19,27 @@
 
 ---
 
+## Resume state (2026-04-20)
+
+**Already completed** (commits in `main`, pushed to `origin`):
+
+| Task | Status | Commit |
+|---|---|---|
+| 8 — codex-critic persona | DONE | `553288e` |
+| 9 — claude-coder persona | DONE | `dfa0cf3` |
+| 10 — codex-ue-expert persona | DONE | `41a39c9` |
+| 11 — gitignore CHANNELS.local.md | DONE | `8521342` |
+
+Persona files exist at `crew/personas/{critic,coder,ue-expert}.md`. Scratch file `crew/CHANNELS.local.md` is created (gitignored) with empty channelId slots waiting to be filled.
+
+**Next action on resume: Task 1 (Phase 0 gate).** Run the Phase 0 task sequence (Tasks 1-7) to decide whether approach B is viable before creating the full 3-worker roster. All Phase 0 steps require either the user's terminal (gateway config commands, `codex --version`) or manual Discord action (channel creation + smoke posts). The controller agent can watch health output and grep session transcripts but cannot log into Discord.
+
+If Phase 0 passes, continue with Tasks 12-21 in order. Task 12 (create 4 worker channels, collect IDs) unblocks Task 13 (bindings) and Task 15 (skill body needs channelIds). Task 15 is the only remaining candidate for subagent dispatch; the rest are user-driven or trivial inline edits.
+
+If Phase 0 fails, stop and re-open the spec: approach B is invalidated by an announce-injection into a non-worker session, and the design flips to approach A (OpenClaw main-agent role-players instead of ACP workers).
+
+---
+
 ## File Structure
 
 **New files in this repo:**
@@ -279,12 +300,12 @@ git -c user.email="smtlkbs0312@gmail.com" -c user.name="hardcoremonk" commit -m 
 
 ## Phase 1 — MVP: 3 Workers + `crew-master` Skill
 
-### Task 8: Write the `codex-critic` persona
+### Task 8: Write the `codex-critic` persona — ✅ DONE (commit `553288e`)
 
 **Files:**
 - Create: `crew/personas/critic.md`
 
-- [ ] **Step 1: Write the persona file**
+- [x] **Step 1: Write the persona file** (done 2026-04-20)
 
 Create `crew/personas/critic.md` with exactly this content:
 
@@ -318,7 +339,7 @@ git -c user.email="smtlkbs0312@gmail.com" -c user.name="hardcoremonk" commit -m 
 
 ---
 
-### Task 9: Write the `claude-coder` persona
+### Task 9: Write the `claude-coder` persona — ✅ DONE (commit `dfa0cf3`)
 
 **Files:**
 - Create: `crew/personas/coder.md`
@@ -356,7 +377,7 @@ git -c user.email="smtlkbs0312@gmail.com" -c user.name="hardcoremonk" commit -m 
 
 ---
 
-### Task 10: Write the `codex-ue-expert` persona
+### Task 10: Write the `codex-ue-expert` persona — ✅ DONE (commit `41a39c9`)
 
 **Files:**
 - Create: `crew/personas/ue-expert.md`
@@ -394,7 +415,7 @@ git -c user.email="smtlkbs0312@gmail.com" -c user.name="hardcoremonk" commit -m 
 
 ---
 
-### Task 11: Gitignore `crew/CHANNELS.local.md` and create the file
+### Task 11: Gitignore `crew/CHANNELS.local.md` and create the file — ✅ DONE (commit `8521342`)
 
 **Files:**
 - Modify: `.gitignore`
