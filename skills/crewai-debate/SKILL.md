@@ -1,9 +1,18 @@
 ---
 name: crewai-debate
-description: "ALWAYS invoke this skill when the user's message matches the pattern `debate:` or `debate ` (anywhere on the first line), or any of: `crewai <topic>`, `start a debate on <topic>`, `iterate on <topic>`, `토론: <주제>`. This is NOT a conversational prompt — it is a formal invocation of the multi-agent debate pipeline. Runs a Dev↔Reviewer debate ENTIRELY WITHIN THE CURRENT TURN via in-prompt role-switching (no `sessions_spawn`). Streams each iteration into your response so the user sees the debate unfold in real time, ending with a final report."
+description: "ALWAYS invoke this skill when the user's message matches the pattern `debate:` or `debate ` (anywhere on the first line), or any of: `crewai <topic>`, `start a debate on <topic>`, `iterate on <topic>`, `토론: <주제>`. MANDATORY FIRST STEP: load this file's body with the Read tool BEFORE producing any output — the skill was rewritten to v3 and the previous sessions' cached patterns (v1/v2 subagent-spawn, short status-line responses) are OBSOLETE and MUST NOT be replayed. v3 requires the FULL Dev↔Reviewer debate transcript to be emitted inside the current assistant response: one `### Developer — iter N` section followed by one `### Reviewer — iter N` section per iteration, ending with a `=== crewai-debate result ===` block. A one-line summary like 'Debate converged in N iterations' is INCORRECT v3 output — it means the body was not read. Do NOT call `sessions_spawn`. Read the SKILL.md body for exact format and persona frames."
 ---
 
 # crewai-debate (v3, single-turn role-switching)
+
+## Pre-execution checklist (read in order, DO NOT skip)
+
+1. Did you just match this skill from the description? Then you are reading this because you used the Read tool — good. If you are replying without having used Read on this file first, stop: your output will be wrong because the description alone does not specify the format.
+2. Are you about to emit a one-line status such as "Debate converged in N iterations" or "Sidecar archived"? That is **v2 behavior and is forbidden in v3**. v3 requires the full debate transcript in the assistant response (see "Output format" below). Correct yourself before emitting.
+3. Are you about to call `sessions_spawn`? Do NOT. v3 has no subagents. You personate Developer and Reviewer yourself, in sequential sections of the current assistant response.
+4. If the user's message does not contain a real topic (just a trigger keyword with no content), ask for a topic and stop — do not fabricate one.
+
+## What this skill does
 
 Runs a multi-iteration Developer↔Reviewer debate on a coding topic within the current assistant turn. No subagent spawning — you personate both roles sequentially in one response.
 
