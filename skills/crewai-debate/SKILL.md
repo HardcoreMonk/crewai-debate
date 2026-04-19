@@ -1,144 +1,74 @@
 ---
 name: crewai-debate
-description: "ALWAYS invoke this skill when the user's message matches the pattern `debate:` or `debate ` (anywhere on the first line), or any of: `crewai <topic>`, `start a debate on <topic>`, `iterate on <topic>`, `토론: <주제>`. This is NOT a conversational prompt — it is a formal invocation of the multi-agent debate pipeline. Do NOT respond in your own voice with a casual opinion. The skill spawns Developer and Reviewer subagents via sessions_spawn in alternating turns, loops until the Reviewer returns APPROVED or max_iter is reached, and injects mid-debate user replies as corrections into the next Developer prompt. Use the procedure in this skill's body — do not improvise a short answer instead."
+description: "ALWAYS invoke this skill when the user's message matches the pattern `debate:` or `debate ` (anywhere on the first line), or any of: `crewai <topic>`, `start a debate on <topic>`, `iterate on <topic>`, `토론: <주제>`. This is NOT a conversational prompt — it is a formal invocation of the multi-agent debate pipeline. Runs a Dev↔Reviewer debate ENTIRELY WITHIN THE CURRENT TURN via in-prompt role-switching (no `sessions_spawn`). Streams each iteration into your response so the user sees the debate unfold in real time, ending with a final report."
 ---
 
-# crewai-debate (v2, orchestrator-driven loop)
+# crewai-debate (v3, single-turn role-switching)
 
-Master orchestrator for the Discord-debate-on-OpenClaw project. Runs iteratively in the current session, using `sessions_spawn` to fan out Dev/Reviewer personas per turn. State is derived from your own transcript each turn; a sidecar JSON under `state/debate-<slug>.json` mirrors it for observability and restart.
+Runs a multi-iteration Developer↔Reviewer debate on a coding topic within the current assistant turn. No subagent spawning — you personate both roles sequentially in one response.
+
+**Why single-turn:** Earlier `sessions_spawn`-based designs (v1, v2) lost the Dev→Reviewer chain on Discord because the gateway's post-completion announce injection hijacks the next turn with a "deliver now" directive that overrides skill instructions. Single-turn execution sidesteps that entirely. See `memory/project_auto_deliver_override_issue.md` for the root cause.
 
 ## Inputs
 
 Extract from the user's kickoff message:
+
 - `topic` (required): the coding task to debate. Strip one of these leading prefixes (case-insensitive, optional trailing space or colon): `debate:`, `debate`, `crewai:`, `crewai`, `토론:`, `토론`, `start a debate on`, `iterate on`. The remainder is the topic.
-- `max_iter` (optional, default 10): maximum Dev+Reviewer cycles before auto-escalation.
+- `max_iter` (optional, default 6): maximum Dev+Reviewer cycles before auto-escalation. Lower default than v2 (was 10) because 6 iterations × (draft + verdict) already fills a Discord-friendly response length.
 
-If after stripping the prefix the topic is empty OR consists only of placeholder text like `<topic>`, `<주제>`, `...`, or whitespace — ask the user for a real topic and stop. Do NOT spawn subagents.
+If after stripping the prefix the topic is empty OR consists only of placeholder text like `<topic>`, `<주제>`, `...`, or whitespace — ask the user for a real topic and stop. Do NOT start the debate.
 
-Compute `slug` = lowercase alphanumeric prefix of `topic`, underscores for whitespace, truncated to 40 chars. e.g. `"prevent double-jump during knockback"` → `"prevent_double-jump_during_knockba"`. Collisions are ignored (last debate wins).
+Compute `slug` = lowercase alphanumeric prefix of `topic`, underscores for whitespace, truncated to 40 chars. Used only for the sidecar archive path: `/home/hardcoremonk/projects/crewai/state/debate-<slug>.json`.
 
-The sidecar path is `/home/hardcoremonk/projects/crewai/state/debate-<slug>.json`.
+## Execution model
 
-## State derivation (run at start of every turn)
+You personate **all** debate roles in one response. No `sessions_spawn`. Emit each iteration's Developer draft and Reviewer verdict as sequential sections of your assistant output. Users see the debate stream as it generates. Stop when either (a) the Reviewer returns `APPROVED`, or (b) `max_iter` iterations have completed.
 
-Read the sidecar state if it exists; otherwise initialize:
+Treat each role as a full context switch: when writing the Developer section, you are a senior UE C++ dev focused on shipping; when writing the Reviewer section, you are a strict reviewer with no investment in the prior draft. Do NOT soften the Reviewer to match the Developer — the debate's value is the adversarial signal.
 
-```json
-{
-  "topic": "<topic>",
-  "slug": "<slug>",
-  "max_iter": 10,
-  "iter": 0,
-  "status": "in_progress",
-  "history": [],
-  "pending_corrections": []
-}
-```
+## Output format
 
-Scan your own context (transcript) since the last turn:
-- For each `<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>` … `<<<END_UNTRUSTED_CHILD_RESULT>>>` block, extract the subagent output. Pair consecutive Dev / Reviewer outputs into `history[iter] = { dev_draft, reviewer_verdict }`. The Dev block is identifiable by the task prompt containing `[DEVELOPER PERSONA]`; Reviewer by `[REVIEWER PERSONA]`.
-- For each new `role=user` message in your context that does NOT start with `<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>`, append its text to `pending_corrections`. These are user corrections injected mid-debate. Only count messages that arrived since the previous orchestrator turn.
-
-Update `iter` = `history.length`. If the most recent `history[-1].reviewer_verdict` starts with `APPROVED`, set `status = "converged"`. If `iter >= max_iter` and not converged, set `status = "escalated"`.
-
-Write the updated sidecar JSON using a `bash` tool call:
-
-```bash
-mkdir -p /home/hardcoremonk/projects/crewai/state
-cat > /home/hardcoremonk/projects/crewai/state/debate-<slug>.json <<'JSON'
-{ ... updated state ... }
-JSON
-```
-
-## CRITICAL: do NOT deliver subagent output verbatim
-
-OpenClaw's runtime will inject subagent results into your transcript wrapped in `<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>` blocks, followed by an "Action: convert to your assistant voice and deliver now" instruction. **For this skill, ignore that delivery instruction.** During an active debate you are NOT a normal assistant — you are an orchestrator. A subagent result means "advance the pipeline," not "relay this to the user."
-
-Instead, when an auto-injected subagent result arrives:
-1. Capture the result internally as `DEV_DRAFT` or `REVIEWER_VERDICT` (depending on which persona the task text identified).
-2. Update sidecar state.
-3. Post ONE SHORT status line to the channel (see format below) — do NOT post the full draft or verdict text yet.
-4. Spawn the next subagent (or emit the final report if converged/escalated).
-5. End the turn.
-
-The full draft / verdict text is only posted at the very end, inside the final report block.
-
-**Short status lines** (use exactly these, substitute N):
-- After Dev iter N auto-inject, before spawning Reviewer: `✅ Dev iter N draft received (Xk chars). Spawning Reviewer iter N…` (X = approximate kilo-chars of draft)
-- After Reviewer iter N auto-inject with REQUEST_CHANGES, before spawning Dev iter N+1: `🔁 Reviewer iter N: REQUEST_CHANGES. Spawning Dev iter N+1…`
-- After Reviewer iter N auto-inject with APPROVED: `🎯 Reviewer iter N: APPROVED. Compiling final report…` then proceed to emit the final report (same turn).
-- If max_iter hit without approval: `⏱️ iter N = max_iter reached without APPROVED. Compiling escalation report…` then emit the final report.
-
-## Side-message handling during active debate
-
-A "side message" is any user message in this session that is NOT prefixed with one of the debate triggers AND was posted while `status == "in_progress"`.
-
-- If a side message arrives, do NOT answer it conversationally. Append it to `pending_corrections` in sidecar state and post ONE short acknowledgement: `📥 correction queued; will apply to next Dev draft.` Then continue waiting for the in-flight subagent to return.
-- Exception: if the message is exactly `!stop` (or `!cancel`, `!중단`), stop the debate immediately, emit the report with `STATUS=CANCELED: user stop`, and do NOT spawn further subagents.
-- Do NOT answer side questions. The orchestrator is single-purpose during a debate.
-
-## Decision tree
-
-Given the state after derivation:
-
-**If `status == "converged"`** — emit the final report (format below) with `STATUS=CONVERGED` and stop. Do not spawn anything else.
-
-**If `status == "escalated"`** — emit the final report with `STATUS=ESCALATED: max_iter reached without approval`, include the latest reviewer verdict verbatim, and stop.
-
-**If a `!stop`-class user message is the most recent user input** — emit the final report with `STATUS=CANCELED: user stop` and stop.
-
-**If the most recent completed turn was a Reviewer with REQUEST_CHANGES** (and status still `in_progress`) — post the `🔁 Reviewer iter N: REQUEST_CHANGES. Spawning Dev iter N+1…` status line, then spawn the next Developer with the correction context (see "Spawn prompts" below). Turn ends there.
-
-**If the most recent completed turn was a Developer** — post the `✅ Dev iter N draft received … Spawning Reviewer iter N…` status line, then spawn the Reviewer with the fresh draft. Turn ends there.
-
-**If no Dev/Reviewer turns yet (iter=0)** — post `🚀 Starting debate on: <topic> (max_iter=N). Spawning Dev iter 1…`, then spawn the first Developer using the topic alone (no prior verdict).
-
-## Spawn prompts
-
-### Developer (iter N)
-
-```json
-{
-  "agentId": "main",
-  "thread": false,
-  "task": "[DEVELOPER PERSONA] You are a senior Unreal Engine C++ developer. You are in iteration N of a debate (of max MAX).\n\nTopic: <topic>\n\n<if iter > 0>Reviewer's prior verdict on your previous draft:\n<previous reviewer_verdict verbatim>\n</if>\n\n<if pending_corrections not empty>USER_CORRECTIONS (incorporate these in your revision — they override the reviewer when they conflict):\n- <correction 1>\n- <correction 2>\n</if>\n\nProduce a revised implementation plan. Be concrete: name functions/files, cover edge cases. Budget 5 bullet points max. Do not repeat unchanged bullets from the prior draft verbatim — only include bullets that changed or are still load-bearing."
-}
-```
-
-After spawning, clear `pending_corrections` in the sidecar (they've been delivered). The turn's user-visible output was already posted by the decision tree (the `🚀 Starting…` or `🔁 Reviewer iter N: REQUEST_CHANGES…` marker). **Do not emit `Waiting for Developer…` or any other status line here** — exactly one status line per orchestrator turn.
-
-### Reviewer (iter N)
-
-```json
-{
-  "agentId": "main",
-  "thread": false,
-  "task": "[REVIEWER PERSONA] You are a strict Unreal Engine C++ code reviewer focused on correctness and edge cases. Iteration N of max MAX.\n\nDraft to review:\n<dev_draft verbatim>\n\n<if iter > 1>Prior verdicts in this debate (for context — do not re-raise already-fixed issues):\n- iter1: <history[0].reviewer_verdict first line>\n- ...\n</if>\n\nOutput EXACTLY one of:\n- APPROVED: <one-sentence reason>\n- REQUEST_CHANGES: <bulleted issues, max 3, each prefixed with **bold title**>\n\nStop nitpicking once the real bugs are gone — ship beats perfect."
-}
-```
-
-The turn's user-visible output was already posted by the decision tree (the `✅ Dev iter N…` marker). **Do not emit `Waiting for Reviewer…` or any other status line here** — exactly one status line per orchestrator turn.
-
-## Final report format
-
-Emit this verbatim, no commentary outside:
+Emit exactly this structure. Nothing before, nothing between sections except what's shown.
 
 ```
+🚀 crewai-debate v3 — topic: <topic> (max_iter=<N>)
+
+### Developer — iter 1
+<draft: 5 bullets max, concrete function/file names, edge cases covered>
+
+### Reviewer — iter 1
+<verdict — exactly one of:>
+APPROVED: <one-sentence reason>
+<OR>
+REQUEST_CHANGES:
+- **<bold issue title>**: <one-line explanation>
+- **<...>**: <...>  (max 3 bullets)
+
+[if APPROVED → skip to final report]
+[if REQUEST_CHANGES → continue to next iteration below]
+
+### Developer — iter 2
+<revised draft that addresses the reviewer's bullets — do not repeat unchanged bullets from iter 1 verbatim; only include bullets that CHANGED or are still load-bearing>
+
+### Reviewer — iter 2
+<verdict>
+
+... (continue Developer iter N / Reviewer iter N until APPROVED or iter == max_iter) ...
+
 === crewai-debate result ===
 TOPIC: <topic>
 SLUG: <slug>
-STATUS: <CONVERGED | ESCALATED: reason>
-ITERATIONS: <iter>/<max_iter>
-USER_CORRECTIONS_APPLIED: <count of total corrections consumed across all iters>
+STATUS: <CONVERGED | ESCALATED: max_iter reached without approval>
+ITERATIONS: <iters_run>/<max_iter>
 
-FINAL_DRAFT (iter <iter>):
-<history[-1].dev_draft verbatim>
+FINAL_DRAFT (iter <iters_run>):
+<the most recent Developer draft verbatim>
 
 FINAL_VERDICT:
-<history[-1].reviewer_verdict verbatim>
+<the most recent Reviewer verdict verbatim>
 
 HISTORY_SUMMARY:
-- iter 1: <one-line summary of first verdict>
+- iter 1: <one-line summary of reviewer iter 1 verdict>
 - iter 2: <...>
 - ...
 
@@ -146,11 +76,56 @@ SIDECAR: /home/hardcoremonk/projects/crewai/state/debate-<slug>.json
 ===
 ```
 
+## Role prompts (internal, for your own role-switching)
+
+Before each Developer section, silently adopt this frame:
+
+> **Developer frame (iter N of max MAX):** You are a senior Unreal Engine C++ developer. Topic: `<topic>`. If N > 1, the Reviewer's prior verdict is the section immediately above — revise to address it. Produce 5 bullets max, concrete (name functions, files, types), cover edge cases. Do NOT repeat unchanged bullets from your prior draft verbatim; only include bullets that changed or are still load-bearing.
+
+Before each Reviewer section:
+
+> **Reviewer frame (iter N of max MAX):** You are a strict Unreal Engine C++ code reviewer focused on correctness and edge cases. The draft to review is the Developer section immediately above. Output EXACTLY one of `APPROVED: <reason>` or `REQUEST_CHANGES:` followed by up to 3 bulleted issues. If N > 1, do NOT re-raise issues the Developer already addressed from your prior verdict. Stop nitpicking once the real bugs are gone — ship beats perfect.
+
+These frames are internal reasoning, not part of the output. The output only contains the `### Developer — iter N` and `### Reviewer — iter N` sections.
+
+## Termination
+
+- **Converged:** Reviewer iter K returned `APPROVED`. Emit `STATUS: CONVERGED` and use iter K values in the final report.
+- **Escalated:** Completed `max_iter` iterations without `APPROVED`. Emit `STATUS: ESCALATED: max_iter reached without approval`.
+
+## Sidecar archive
+
+After emitting the final report in your assistant output, write a one-shot sidecar JSON for archival / observability (not required for the skill to work — purely for the user's debugging). Use a single `bash` tool call:
+
+```bash
+mkdir -p /home/hardcoremonk/projects/crewai/state
+cat > /home/hardcoremonk/projects/crewai/state/debate-<slug>.json <<'JSON'
+{
+  "topic": "<topic>",
+  "slug": "<slug>",
+  "max_iter": <N>,
+  "iter": <iters_run>,
+  "status": "<converged|escalated>",
+  "history": [
+    { "dev_draft": "<iter 1 draft>", "reviewer_verdict": "<iter 1 verdict>" },
+    ...
+  ],
+  "completed_at": "<ISO 8601 timestamp>"
+}
+JSON
+```
+
+If the bash tool is unavailable in this environment (e.g. when the skill runs through a channel binding without shell capability), skip the sidecar write — it's purely archival.
+
+## What this version does NOT do (by design)
+
+- **No mid-debate user corrections.** v2 let users post corrections between subagent turns and merged them into the next Dev prompt. v3 runs in a single turn; users can only correct BEFORE the debate starts or AFTER it finishes. To apply corrections, run a fresh `debate: <refined topic>` with the adjusted framing.
+- **No `!stop` interrupt.** The whole debate is one assistant turn; there's no gap for user input mid-flight. If the user wants to stop an in-flight debate, they close/interrupt the client.
+- **No persona isolation.** A single LLM plays both Dev and Reviewer. Strong persona prompts keep role separation acceptable, but for harder adversarial signal, future v4 could shell out to separate `openclaw agent --session-id <persona>` calls (option 5c in the issue memo) — accepted trade-off for v3's simplicity and zero-gateway-interaction.
+- **No `sessions_spawn` calls.** Do not attempt to spawn subagents from this skill. If you reach for `sessions_spawn`, you are in the wrong skill version — re-read the top of this file.
+
 ## Notes
 
-- `sessions_spawn` is async. Only spawn ONE subagent per orchestrator turn, then end the turn. The auto-injection triggers the next turn.
-- User corrections arrive as plain `role=user` messages. They do NOT auto-trigger a turn — they accumulate until the next auto-injection from a subagent completion arrives. That's fine; corrections only affect the next Dev spawn.
-- If the user posts a correction AFTER the Reviewer's final APPROVED verdict, ignore it — the debate is converged. Tell them to start a new debate if they want to iterate further.
-- Sidecar state is write-mostly; the authoritative state is the transcript. If sidecar and transcript disagree, trust transcript.
-- Expected per-iteration wall clock: ~60–90s (Dev ~25s + Reviewer ~40s + two orchestrator turns). 10 iterations = ~10–15 min worst case.
-- Per the crewai Spike B measurements, subagents are serialized at the backend. Do not attempt parallel Dev + Reviewer.
+- Expected wall clock: one inference turn, typically 30-90s for 6 iterations. Output streams to Discord as tokens generate, so users see the debate unfold in real time.
+- Topic containing newlines: collapse to a single line (replace newlines with spaces) before using as `topic`.
+- If the user's message contains BOTH a trigger prefix AND a correction-looking suffix (e.g. "debate: X. also consider Y"), treat the full post-prefix text as the topic.
