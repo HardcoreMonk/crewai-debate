@@ -19,9 +19,9 @@
 
 ---
 
-## Resume state (2026-04-20)
+## Resume state (2026-04-22)
 
-**Already completed** (commits in `main`, pushed to `origin`):
+**Already completed** (commits in `main`):
 
 | Task | Status | Commit |
 |---|---|---|
@@ -29,14 +29,15 @@
 | 9 — claude-coder persona | DONE | `dfa0cf3` |
 | 10 — codex-ue-expert persona | DONE | `41a39c9` |
 | 11 — gitignore CHANNELS.local.md | DONE | `8521342` |
+| 1 — Codex CLI verify | DONE | (inspection only, `codex-cli 0.122.0`, ChatGPT auth) |
+| 2 — ACP enabled | DONE | (external config: `acp.enabled=true`, `backend=acpx`, `allowedAgents=[codex,claude]`; backup `~/.openclaw/openclaw.json.bak.pre-acp`) |
+| 3 — gateway restart + ACP reachable | DONE | (`Discord: ok`, `openclaw acp --help` OK) |
+| 4 — `#crew-spike-0` channel | DONE | channelId `1496209877318631716`, recorded in `crew/CHANNELS.local.md` |
+| 5 — spike ACP binding | DONE | (one `acp→codex` binding; gateway restarted) |
+| 6 — spike round-trip | PASS | User posted probe 2026-04-22 03:14; Codex self-identified reply in `#crew-spike-0` |
+| 7 — ACP gate | **PASS** | `96f2605` — note at `docs/superpowers/notes/2026-04-22-acp-gate.md` |
 
-Persona files exist at `crew/personas/{critic,coder,ue-expert}.md`. Scratch file `crew/CHANNELS.local.md` is created (gitignored) with empty channelId slots waiting to be filled.
-
-**Next action on resume: Task 1 (Phase 0 gate).** Run the Phase 0 task sequence (Tasks 1-7) to decide whether approach B is viable before creating the full 3-worker roster. All Phase 0 steps require either the user's terminal (gateway config commands, `codex --version`) or manual Discord action (channel creation + smoke posts). The controller agent can watch health output and grep session transcripts but cannot log into Discord.
-
-If Phase 0 passes, continue with Tasks 12-21 in order. Task 12 (create 4 worker channels, collect IDs) unblocks Task 13 (bindings) and Task 15 (skill body needs channelIds). Task 15 is the only remaining candidate for subagent dispatch; the rest are user-driven or trivial inline edits.
-
-If Phase 0 fails, stop and re-open the spec: approach B is invalidated by an announce-injection into a non-worker session, and the design flips to approach A (OpenClaw main-agent role-players instead of ACP workers).
+**Next action on resume: Task 12** (create 4 worker channels `#crew-master`, `#crew-codex-critic`, `#crew-claude-coder`, `#crew-codex-ue-expert` and collect channelIds). Requires user Discord UI action. Then Task 13 (4 ACP bindings), Task 15 (`crew-master` skill body — only candidate for subagent dispatch), and the smoke tests (Tasks 16-19).
 
 ---
 
