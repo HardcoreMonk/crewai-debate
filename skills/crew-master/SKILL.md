@@ -1,6 +1,6 @@
 ---
 name: crew-master
-description: "Invoke this skill when a user message in the `#crew-master` Discord channel (channelId memorised at runtime) starts with `@codex-critic`, `@claude-coder`, or `@codex-ue-expert`, or lists any of those names comma-separated. The skill parses the target(s), dispatches the task text via `openclaw message send` to the worker's channel, and supports master-mediated relay references (e.g., `@codex-critic 의 이슈 #3을 @claude-coder 에게`). Also handles `reset <worker>` to reinitialise a worker's ACP session. Do NOT fire this skill for messages outside `#crew-master`. Do NOT spawn subagents. See SKILL.md body for exact behaviour."
+description: "Invoke this skill when a user message in the `#crew-master` Discord channel (channelId memorised at runtime) starts with `@codex-critic`, `@claude-coder`, or `@codex-ue-expert`, or lists any of those names comma-separated. The skill parses the target(s) and spawns `lib/crew-dispatch.sh` (Bash tool, setsid + background + disown) to run the worker CLI in its persona cwd; the helper then posts the worker's reply to that worker's channel. The skill itself never calls `openclaw message send` for dispatch — only the helper does. Also supports master-mediated relay references (e.g., `@codex-critic 의 이슈 #3을 @claude-coder 에게`) and `reset <worker>`. Do NOT fire this skill for messages outside `#crew-master`. Do NOT spawn subagents. See SKILL.md body for exact commands."
 ---
 
 # crew-master (v0.1)
