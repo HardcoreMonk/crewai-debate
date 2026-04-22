@@ -82,6 +82,17 @@ setsid bash /home/hardcoremonk/projects/claude-zone/crewai/lib/crew-dispatch.sh 
 disown
 ```
 
+**For relay dispatches (pattern #3), pass the source worker name as a 4th argument:**
+
+```bash
+setsid bash /home/hardcoremonk/projects/claude-zone/crewai/lib/crew-dispatch.sh \
+  '<TARGET_WORKER>' '<TARGET_CHANNEL_ID>' "<TASK_BODY>" '<SOURCE_WORKER>' \
+  >/dev/null 2>&1 < /dev/null &
+disown
+```
+
+The 4th arg triggers the helper's relay-header enforcement: if the first non-blank line of `<TASK_BODY>` does not already start with `<SOURCE_WORKER> 가 제기한 내용`, the helper prepends it. Compose the body with the header yourself (§"Relay ref parser" below) *and* pass the 4th arg — belt and suspenders. Do not pass the 4th arg on non-relay dispatches (single or fan-out); the helper would corrupt plain tasks by inserting a false citation header.
+
 The helper invokes `codex exec` (or `claude --print`) in `/home/hardcoremonk/.openclaw/workspace/crew/<role>/`, where the AGENTS.md/CLAUDE.md symlink loads the persona. It then posts the CLI output to `<WORKER_CHANNEL_ID>` via `openclaw message send` and caches the reply at `/home/hardcoremonk/.openclaw/workspace/crew/state/<WORKER_NAME>-last.txt` for relay reads.
 
 After spawning the helper (single or fan-out), post a one-line confirmation in `#crew-master`:

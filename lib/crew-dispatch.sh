@@ -2,7 +2,7 @@
 # crew-dispatch — invoke a worker CLI in its persona cwd and post the reply to Discord.
 #
 # Usage:
-#   crew-dispatch.sh <worker> <channelId> <task-body>
+#   crew-dispatch.sh <worker> <channelId> <task-body> [relay-source-worker]
 #
 # Workers (hardcoded cwd + runner):
 #   codex-critic     -> /home/hardcoremonk/.openclaw/workspace/crew/critic    (codex)
@@ -12,19 +12,41 @@
 # The persona system-prompt lives at <cwd>/AGENTS.md (codex) or <cwd>/CLAUDE.md (claude)
 # as symlinks back to crew/personas/*.md in the repo. Both CLIs auto-load these.
 #
+# Relay mode: if the 4th arg is set to another worker name (the *source*), the helper
+# ensures the task body starts with "<source> 가 제기한 내용:" — prepending it if the
+# skill forgot. This is belt-and-suspenders: the crew-master SKILL.md is supposed to
+# compose that header, but passing the source name here makes the helper enforce it so
+# the target worker can always tell cited context from the new instruction.
+#
 # Why this exists: `openclaw message send` posts as the bot; bot-origin messages do not
 # re-trigger ACP bindings, so dispatching task bodies into worker channels via message
 # send alone does not wake the worker. This helper bypasses the bot receive path by
 # invoking the worker CLI directly and then posting its output back to the channel.
 #
 # Typically invoked from the crew-master skill in background:
-#   setsid bash lib/crew-dispatch.sh "$W" "$C" "$T" >/dev/null 2>&1 < /dev/null &
+#   setsid bash lib/crew-dispatch.sh "$W" "$C" "$T" [SRC] >/dev/null 2>&1 < /dev/null &
 
 set -euo pipefail
 
 WORKER="${1:?worker name required}"
 CHANNEL="${2:?channel id required}"
 TASK="${3:?task body required}"
+RELAY_SRC="${4:-}"
+
+if [ -n "$RELAY_SRC" ]; then
+  case "$RELAY_SRC" in
+    codex-critic|claude-coder|codex-ue-expert) ;;
+    *) echo "unknown relay source: $RELAY_SRC" >&2; exit 2 ;;
+  esac
+  EXPECTED_HEADER="${RELAY_SRC} 가 제기한 내용"
+  # Check first non-blank line. Prepend header if missing.
+  FIRST_LINE="$(printf '%s' "$TASK" | awk 'NF{print; exit}')"
+  case "$FIRST_LINE" in
+    "$EXPECTED_HEADER"*) ;;  # already headered — leave as-is
+    *) TASK="${EXPECTED_HEADER}:
+${TASK}" ;;
+  esac
+fi
 
 TS=$(date +%Y%m%d-%H%M%S)
 LOG="/tmp/crew-dispatch-${TS}-${WORKER}.log"
