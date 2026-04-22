@@ -25,6 +25,6 @@ The 2026-04-22 timeout fix (commit `5aaf969`) delivers partial output + a `⏱` 
 
 Defer until we have real evidence retries are needed.
 
-## Phase 1 items still open (not Phase 2)
+## Phase 1 status
 
-From the plan's acceptance checklist: only **Task 21 (push to origin)** remains. Tasks 17 (relay smoke), 18 (unknown/malformed), 19 (reset) all cleared on 2026-04-22 — see `2026-04-22-phase1-smokes-complete.md` for the consolidated result matrix.
+All Phase 1 acceptance items cleared as of 2026-04-22 push (`eada896` → `origin/main`). Result matrix in `2026-04-22-phase1-smokes-complete.md`; relay-smoke detail in `2026-04-22-relay-smoke.md`.
