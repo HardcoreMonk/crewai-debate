@@ -1,6 +1,12 @@
-# Phase 2 follow-up (deferred)
+# Phase 2 follow-up
 
-Tracked here so the items aren't lost between sessions. **Not planned yet** — Phase 1 needs to soak on a real UE5 debate before we decide which of these are actually worth building. See `docs/superpowers/plans/2026-04-20-discord-crew-master-worker-plan.md` §"Phase 2 (separate plan, not in this one)" for the original list.
+Tracked here so items aren't lost between sessions. See `docs/superpowers/plans/2026-04-20-discord-crew-master-worker-plan.md` §"Phase 2 (separate plan, not in this one)" for the original list.
+
+## In progress
+
+### Phase 2.1 — busy/queued notice (item 2)
+
+Design locked 2026-04-22 — spec at `docs/superpowers/specs/2026-04-22-crew-master-phase2-busy-notice-design.md`. Awaiting user spec review before writing the implementation plan.
 
 ## Deferred items
 
@@ -9,10 +15,7 @@ When a worker finishes and posts to its own channel, have the master also drop a
 
 Open question: who composes the summary? Options — (a) helper truncates the worker reply to one line, (b) a separate one-shot LLM call summarises, (c) master skill is notified on next user turn and chooses to back-post.
 
-### 2. Busy / queued notice
-Right now a second `@worker` dispatch during an in-flight helper spawns a second CLI process in the same persona cwd. That may race on transient files and double-post replies. Want: either queue serially per worker, or reject with `⏳ <worker> busy, reply in ~Ns` in `#crew-master`.
-
-Simplest implementation: the helper acquires `flock` on `/home/hardcoremonk/.openclaw/workspace/crew/state/<worker>.lock` for the duration of the CLI call; the skill checks `fuser`/`flock -n` before spawning, and posts the busy notice if locked.
+### 2. Busy / queued notice — promoted to Phase 2.1 (see "In progress" above)
 
 ### 3. Broadcast to all workers
 `@all: <task>` or similar syntax to fan out to all three workers at once. Trivial parser extension on top of existing multi-dispatch, but usefulness is unclear until real usage shows whether users actually want three parallel opinions on the same prompt.
