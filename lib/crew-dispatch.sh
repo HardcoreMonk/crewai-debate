@@ -53,6 +53,8 @@ esac
   echo "---"
 } > "$LOG"
 
+: > "$OUT"
+set +e
 case "$RUNNER" in
   codex)
     timeout "$MAX_SECS" codex exec \
@@ -60,28 +62,50 @@ case "$RUNNER" in
       --skip-git-repo-check \
       --color never \
       -o "$OUT" \
-      "$TASK" >> "$LOG" 2>&1 \
-      || { echo "codex failed (exit=$?)" >> "$LOG"; : > "$OUT"; }
+      "$TASK" >> "$LOG" 2>&1
+    EXIT=$?
     ;;
   claude)
     ( cd "$CWD" && timeout "$MAX_SECS" claude \
         --print \
         --permission-mode bypassPermissions \
         --output-format text \
-        "$TASK" ) > "$OUT" 2>> "$LOG" \
-      || { echo "claude failed (exit=$?)" >> "$LOG"; : > "$OUT"; }
+        "$TASK" ) > "$OUT" 2>> "$LOG"
+    EXIT=$?
     ;;
 esac
+set -e
+echo "$RUNNER exit=$EXIT" >> "$LOG"
+
+# Timeout handling: do NOT clobber $OUT on failure — partial streamed output
+# (claude always streams; codex -o usually writes-at-end so partial may be empty)
+# is worth delivering with a marker so the user knows the run was cut short.
+MARKER=""
+if [ "$EXIT" -eq 124 ]; then
+  MARKER="[⏱ timed out at ${MAX_SECS}s — output below may be partial]
+
+"
+elif [ "$EXIT" -ne 0 ]; then
+  MARKER="[⚠ ${RUNNER} exit=${EXIT} — output below may be partial]
+
+"
+fi
 
 if [ -s "$OUT" ]; then
   cp "$OUT" "$LAST"
   FULL_BYTES=$(wc -c < "$OUT")
-  if [ "$FULL_BYTES" -gt "$DISCORD_LIMIT" ]; then
-    RESP="$(head -c "$DISCORD_LIMIT" "$OUT")
+  MARKER_BYTES=${#MARKER}
+  BUDGET=$(( DISCORD_LIMIT - MARKER_BYTES ))
+  if [ "$BUDGET" -lt 200 ]; then BUDGET=200; fi
+  if [ "$FULL_BYTES" -gt "$BUDGET" ]; then
+    BODY="$(head -c "$BUDGET" "$OUT")
 … (truncated; full output: $OUT)"
   else
-    RESP="$(cat "$OUT")"
+    BODY="$(cat "$OUT")"
   fi
+  RESP="${MARKER}${BODY}"
+elif [ -n "$MARKER" ]; then
+  RESP="${MARKER}(no output captured — see $LOG)"
 else
   RESP="(empty response — see $LOG)"
 fi
