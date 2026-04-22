@@ -70,6 +70,7 @@ esac
   echo "runner:  $RUNNER"
   echo "cwd:     $CWD"
   echo "channel: $CHANNEL"
+  [ -n "$RELAY_SRC" ] && echo "relay:   $RELAY_SRC"
   printf 'task:    %s\n' "$TASK"
   echo "started: $(date -Iseconds)"
   echo "---"
