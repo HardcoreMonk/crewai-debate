@@ -57,40 +57,59 @@ If the inbound message is not in the `#crew-master` channel, do not fire. The sk
 
 ## Dispatch mechanics
 
-For every successful dispatch or relay, run exactly this shape of command (substituting target and content):
+Dispatch runs the worker CLI directly in its persona cwd (via `lib/crew-dispatch.sh`), because bot-origin messages do not re-trigger the ACP binding on the worker channel — posting task text with `openclaw message send` alone would never wake the worker.
+
+For each successful single dispatch or per-target in a multi-dispatch, run exactly this shape in **background** (do not wait for the CLI):
 
 ```bash
-openclaw message send \
-  --channel discord \
-  --target '<WORKER_CHANNEL_ID>' \
-  --content "<TASK_BODY>"
+setsid bash /home/hardcoremonk/projects/claude-zone/crewai/lib/crew-dispatch.sh \
+  '<WORKER_NAME>' '<WORKER_CHANNEL_ID>' "<TASK_BODY>" \
+  >/dev/null 2>&1 < /dev/null &
+disown
 ```
 
-After dispatch, post a one-line confirmation in `#crew-master`:
+The helper invokes `codex exec` (or `claude --print`) in `/home/hardcoremonk/.openclaw/workspace/crew/<role>/`, where the AGENTS.md/CLAUDE.md symlink loads the persona. It then posts the CLI output to `<WORKER_CHANNEL_ID>` via `openclaw message send` and caches the reply at `/home/hardcoremonk/.openclaw/workspace/crew/state/<WORKER_NAME>-last.txt` for relay reads.
+
+After spawning the helper (single or fan-out), post a one-line confirmation in `#crew-master`:
 ```
 → dispatched to <worker>: <first 60 chars of task body>…
 ```
 (or `→ relay from <source> to <target>: <first 60 chars>…`).
 
-Do NOT wait for the worker's reply. Do NOT post anything else after the confirmation. The worker's response appears in the worker's own channel on its own schedule.
+Do NOT wait for the worker's reply. Do NOT post anything else after the confirmation. The worker's response appears in the worker's own channel 10-180s later (depending on the CLI).
 
 ## Hard rules
 
-1. Do not call `sessions_spawn`. Workers are ACP-bound; you only send them messages.
-2. Do not post into worker channels except via `openclaw message send`. Never paraphrase, never summarise.
-3. Do not call any tool after emitting the confirmation line. One user message in `#crew-master` = one dispatch (or multi-dispatch, or warning) = one confirmation line in `#crew-master`. That's the whole turn.
+1. Do not call `sessions_spawn`. Workers are CLI-spawned by the helper; you only invoke `crew-dispatch.sh`.
+2. Do not post into worker channels yourself. Only the helper does that.
+3. Do not call any tool after emitting the confirmation line. One user message in `#crew-master` = spawn helper(s) in background = one confirmation line in `#crew-master`. That's the whole turn.
 4. Do not react to non-user messages in `#crew-master` (worker summary back-posts live here in Phase 2, and you must ignore them).
 5. Only valid roster names are the three listed above. Anything else is the unknown-worker path.
 
 ## Relay ref parser (detail)
 
-Regex pool (try in order, first match wins):
+Relay source material comes from the last-reply cache, not from Discord API:
+- `codex-critic` → `/home/hardcoremonk/.openclaw/workspace/crew/state/codex-critic-last.txt`
+- `claude-coder` → `/home/hardcoremonk/.openclaw/workspace/crew/state/claude-coder-last.txt`
+- `codex-ue-expert` → `/home/hardcoremonk/.openclaw/workspace/crew/state/codex-ue-expert-last.txt`
+
+If the file is missing or empty, reply in `#crew-master` with `⚠ no previous reply from <source-worker> to relay` and stop.
+
+Regex pool over the cached text (try in order, first match wins):
 - `이슈\s*#(\d+)` / `issue\s*#(\d+)` — matches `이슈 #3`, `issue #3`
 - `bullet\s*(\d+)` / `(\d+)\s*번째\s*(bullet|항목|포인트)` — numbered bullets
-- Discord message link `https?://(canary\.|ptb\.)?discord(app)?\.com/channels/\d+/\d+/\d+` — use the linked message body
-- `방금|위|직전|위 답변` — use the entire most recent assistant message from the source channel
+- `방금|위|직전|위 답변` — use the entire cached reply from the source
 
-If regex pool fails, fall back to: read the last assistant message, then ask yourself: "what section of this text is the user referring to with `<noun-phrase>`?" Extract minimally — prefer one paragraph over the whole message.
+If regex pool fails, fall back to: read the cached reply, then ask yourself: "what section of this text is the user referring to with `<noun-phrase>`?" Extract minimally — prefer one paragraph over the whole message.
+
+Compose the dispatch body as:
+```
+<source-worker> 가 제기한 내용:
+<extracted text>
+
+<instruction>
+```
+Then dispatch to the target worker via the helper as usual.
 
 ## Not included in v0.1 (deferred to Phase 2)
 
