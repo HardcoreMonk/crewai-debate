@@ -134,6 +134,7 @@ Channel IDs are kept in a gitignored `crew/CHANNELS.local.md` scratch file.
 
 Design doc: `docs/superpowers/specs/2026-04-20-discord-crew-master-worker-design.md`.
 Implementation plan: `docs/superpowers/plans/2026-04-20-discord-crew-master-worker-plan.md`.
+Operational runbook (post-edit gateway restart, reply diagnosis): `docs/RUNBOOK.md`.
 
 ## License
 
