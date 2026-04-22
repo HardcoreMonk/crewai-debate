@@ -47,7 +47,19 @@ Action:
 ```
 reset <worker>
 ```
-Action: reset the worker's ACP session so the persona + context start fresh. Implementation: post `/reset` (a magic command the ACP layer may or may not honour) in the worker's channel, AND run `openclaw sessions reset agent:main:discord:channel:<worker-channel-id>` if that CLI path exists (check with `openclaw sessions --help` at runtime). Confirm in `#crew-master` with `✓ reset codex-critic`.
+Action: clear the worker's last-reply cache so future relay references find nothing. This is the whole reset for this skill — every dispatch through `crew-dispatch.sh` already spawns a fresh CLI process, so there is no cross-dispatch memory to clear beyond the cache. Direct-user-in-worker-channel ACP sessions (Task 14 path) are separate and out of this skill's scope.
+
+Implementation (run via Bash tool):
+```bash
+rm -f /home/hardcoremonk/.openclaw/workspace/crew/state/<worker>-last.txt
+```
+
+Then reply in `#crew-master` exactly:
+```
+✓ reset <worker>
+```
+
+If `<worker>` is not on the roster, respond with the standard unknown-worker warning instead.
 
 ### 5. Unknown worker
 Any `@<name>` where `<name>` is not on the roster: reply `⚠ unknown worker: <name>. valid: codex-critic, claude-coder, codex-ue-expert` and do nothing else.
