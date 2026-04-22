@@ -32,7 +32,7 @@ OUT="/tmp/crew-dispatch-${TS}-${WORKER}.out"
 STATE_DIR=/home/hardcoremonk/.openclaw/workspace/crew/state
 LAST="$STATE_DIR/${WORKER}-last.txt"
 mkdir -p "$STATE_DIR"
-MAX_SECS=180
+MAX_SECS=360
 DISCORD_LIMIT=1950
 
 case "$WORKER" in

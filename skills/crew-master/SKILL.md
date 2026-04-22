@@ -109,7 +109,7 @@ Compose the dispatch body as:
 
 <instruction>
 ```
-Then dispatch to the target worker via the helper as usual.
+The header line (`<source-worker> 가 제기한 내용:`) is **required** — it's how the target worker knows the first block is cited context and the second block is the actual new task. Do not omit it even when the extracted text is short. Then dispatch to the target worker via the helper as usual.
 
 ## Not included in v0.1 (deferred to Phase 2)
 
