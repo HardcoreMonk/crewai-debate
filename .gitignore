@@ -4,3 +4,4 @@ state/*.json
 !state/.gitkeep
 .DS_Store
 crew/CHANNELS.local.md
+.playwright-mcp/

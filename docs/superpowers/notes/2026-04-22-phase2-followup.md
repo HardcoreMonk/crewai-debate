@@ -27,4 +27,4 @@ Defer until we have real evidence retries are needed.
 
 ## Phase 1 items still open (not Phase 2)
 
-From the plan's acceptance checklist: Tasks 17 (relay smoke), 18 (unknown-worker/malformed input smoke), 19 (reset smoke), 21 (push) are still unchecked. Next resume should clear those before opening a Phase 2 plan.
+From the plan's acceptance checklist: only **Task 21 (push to origin)** remains. Tasks 17 (relay smoke), 18 (unknown/malformed), 19 (reset) all cleared on 2026-04-22 — see `2026-04-22-phase1-smokes-complete.md` for the consolidated result matrix.
