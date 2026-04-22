@@ -47,19 +47,21 @@ Action:
 ```
 reset <worker>
 ```
-Action: clear the worker's last-reply cache so future relay references find nothing. This is the whole reset for this skill — every dispatch through `crew-dispatch.sh` already spawns a fresh CLI process, so there is no cross-dispatch memory to clear beyond the cache. Direct-user-in-worker-channel ACP sessions (Task 14 path) are separate and out of this skill's scope.
+**DO NOT post `/reset` to the worker channel.** Worker channel messages do nothing useful here (bot-origin messages do not re-trigger the ACP binding, and this skill's dispatch path is CLI-direct, not ACP).
 
-Implementation (run via Bash tool):
+The whole reset is: delete the worker's last-reply cache file so future relay references find nothing. Every dispatch through `crew-dispatch.sh` already spawns a fresh CLI process; there is no cross-dispatch memory to clear beyond that one cache file.
+
+**Required Bash tool invocation** (do this *before* replying in `#crew-master`):
 ```bash
 rm -f /home/hardcoremonk/.openclaw/workspace/crew/state/<worker>-last.txt
 ```
 
-Then reply in `#crew-master` exactly:
+Valid `<worker>` values for the filename: `codex-critic`, `claude-coder`, `codex-ue-expert`. If the user typed an unknown worker name, skip the Bash call and emit the standard unknown-worker warning instead of `✓ reset …`.
+
+After the `rm` succeeds, reply in `#crew-master` exactly (no other text, no tool calls after):
 ```
 ✓ reset <worker>
 ```
-
-If `<worker>` is not on the roster, respond with the standard unknown-worker warning instead.
 
 ### 5. Unknown worker
 Any `@<name>` where `<name>` is not on the roster: reply `⚠ unknown worker: <name>. valid: codex-critic, claude-coder, codex-ue-expert` and do nothing else.
