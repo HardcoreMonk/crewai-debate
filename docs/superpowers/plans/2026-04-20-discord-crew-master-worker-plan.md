@@ -39,6 +39,20 @@
 
 **Next action on resume: Task 12** (create 4 worker channels `#crew-master`, `#crew-codex-critic`, `#crew-claude-coder`, `#crew-codex-ue-expert` and collect channelIds). Requires user Discord UI action. Then Task 13 (4 ACP bindings), Task 15 (`crew-master` skill body — only candidate for subagent dispatch), and the smoke tests (Tasks 16-19).
 
+### Design correction (2026-04-22, post Task 16 attempt)
+
+**Dispatch mechanism in Tasks 15 and 16 as originally written was wrong.** The plan assumed `openclaw message send --target <worker-channel-id>` would re-trigger the ACP binding and wake the worker. Empirically it does not: Discord bots (standard practice) filter their own outgoing messages out of the receive pipeline, so main-agent dispatches into worker channels never reach the ACP runtime.
+
+Verified by session-file inspection: the first Task 16 attempt's dispatches at 19:00-19:02 left each worker's ACP state (`~/.openclaw/workspace/state/sessions/agent%3A...json`) at its prior 14:36-14:37 Task 14 timestamp. No worker activity.
+
+**Fix applied (commit `ae7a543`):**
+- Added `lib/crew-dispatch.sh`: invokes `codex exec` (or `claude --print`) in the worker's persona cwd, then posts the CLI stdout to the worker channel via `openclaw message send`, and caches the reply at `~/.openclaw/workspace/crew/state/<worker>-last.txt` for relay reads.
+- Updated `skills/crew-master/SKILL.md` dispatch mechanics to spawn `crew-dispatch.sh` in background (`setsid … >/dev/null 2>&1 < /dev/null &`) instead of calling `openclaw message send` directly.
+- ACP bindings on worker channels are retained — they still handle direct user-in-worker-channel messages (Task 14 smoke path).
+- Relay source material (Task 17) now reads the last-reply cache file; the ACP state files are not populated by dispatches through the helper.
+
+Task 16 re-attempt: after the fix, a `@codex-ue-expert` dispatch via the helper (invoked manually as a smoke) returned a UE5-framework-expert reply citing `UGameEngine::CreateGameViewport` and landed in `#crew-codex-ue-expert` in ~110s, Discord message ID `1496461309586178191`.
+
 ---
 
 ## File Structure
