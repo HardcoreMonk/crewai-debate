@@ -148,8 +148,8 @@ skills/
   crew-master/SKILL.md     # multi-channel worker dispatcher (v0.1)
 crew/
   personas/
-    critic.md coder.md ue-expert.md   # debate track personas
-    planner.md implementer.md          # harness track personas
+    critic.md coder.md ue-expert.md         # debate track personas
+    planner.md implementer.md adr-writer.md # harness track personas
   CHANNELS.local.md        # gitignored channelId scratch
 lib/
   crew-dispatch.sh         # debate worker CLI launcher + Discord poster

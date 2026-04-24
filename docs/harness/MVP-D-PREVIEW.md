@@ -261,16 +261,14 @@ After applying, run the repo's test command (<TEST_CMD>) and report the last 20 
 
 ---
 
-## 8. MVP-D 킥오프 전 남은 결정
+## 8. MVP-D 킥오프 전 남은 결정 — 해결 상태 (2026-04-25)
 
-구현 착수 시 해야 할 의사결정:
-
-1. **Severity 필터 정책**: `Potential issue`를 자동 적용 **완전 제외** vs **사람 확인 후 라벨로 승격**. 현재 초안은 제외.
-2. **재리뷰 루프 상한**: N=2가 적절한지. 너무 많으면 비용, 너무 적으면 2차 지적에 미대응.
-3. **머지 방식**: `--squash` 디폴트 vs 리포별 설정 파일(`state/harness/repo-config.json` 등).
-4. **obra/coderabbit-review-helper 벤더링 여부**: 라이선스 확인 + 우리 파싱 요구 적합도 검토.
-5. **PR 생성 경계**: MVP-D는 "이미 존재하는 PR" 전제인데, 대상 PR을 어떻게 지정할지 — CLI 인자 `--pr <num>` vs state.json에 저장된 brach에서 자동 탐색.
-6. **크로스-리포 범위**: 초기 타깃은 sandbox? project-dashboard? self-host? — sandbox에 CodeRabbit이 없으니 실제 검증엔 project-dashboard나 crewai 중 하나 필요.
+1. **Severity 필터 정책** — ✅ live-smoke-0 결과 반영해 **재설계**: `type ∈ SAFE_TYPES` **또는** `criticality == minor` → auto-apply, 나머지 human. `Potential issue` 단일 축 기준 필터는 실전에서 18/18 제외라 무용 (§11.2).
+2. **재리뷰 루프 상한** — ✅ **N=2** 확정. PR#1이 자연 수렴(18→3→2→1)한 것으로 유도 검증 PASS. `bump_round`는 명시적 재시작 경로용으로 유지.
+3. **머지 방식** — ✅ `--squash` 디폴트, per-repo override 미구현(YAGNI).
+4. **obra/coderabbit-review-helper 벤더링** — ✅ **미벤더링**, 참조만. 독자 파서(`lib/harness/coderabbit.py`)로 31/31 fixture 통과.
+5. **PR 지정 방식** — ✅ `--pr <num>` CLI 인자 필수. 자동 탐색 없음.
+6. **크로스-리포 범위** — ✅ **crewai 자기 self-host**로 실전 검증 완료 (PR #1 merged, PR #2 pr-create 검증). sandbox는 CodeRabbit 미설치라 pure-local MVP-A regression만 담당.
 
 ---
 
@@ -288,6 +286,7 @@ After applying, run the repo's test command (<TEST_CMD>) and report the last 20 
 |------|------|
 | 2026-04-25 (초안 작성일) | 초안. gh CLI 표면 참조 + CodeRabbit 포맷 primary source 참조 + phase 분할 4안 + persona 재사용 전략. |
 | 2026-04-25 (live 검증) | PR#1 smoke 후 §11 부록 추가. 2.2 포맷·필터 정책 개정은 DESIGN.md §13으로 정리. |
+| 2026-04-25 (post-merge 폴리싱) | §8 킥오프 결정 6건 모두 resolved 상태로 전환 기록. 이 문서는 **as-built 스냅샷은 DESIGN.md §14 canonical 참조**로 위임. |
 
 ---
 

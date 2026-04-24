@@ -124,6 +124,11 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 
 ## 7. Phase 계약 (MVP-A)
 
+> **Scope note**: §7.2–7.4은 MVP-A의 plan/impl/commit 계약. MVP-B(`adr`,
+> `pr-create`)와 MVP-D(`review-*`, `merge`) 계약은 MVP-D-PREVIEW §4 + 본 문서
+> §13.6·§14를 참조. 모든 phase의 timeout/재시도 수치는 `lib/harness/phase.py`의
+> `PHASE_TIMEOUTS`/`PHASE_MAX_ATTEMPTS` 상수가 단일 진원지.
+
 ### 7.1 공통 규칙
 - 모든 phase는 `state/<task-slug>/state.json`에 체크포인트 기록
 - phase 간 전달은 파일 기반 (JSON · markdown · git ref)
@@ -203,7 +208,11 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 
 ---
 
-## 10. 후속 과제 (구현 착수 전 결정 필요)
+## 10. 후속 과제 (구현 착수 전 결정 필요) — **HISTORICAL**
+
+> 이 섹션은 브레인스토밍 동결 시점(2026-04-24)의 구현 착수 전 결정 후보.
+> 실제 구현 이후의 as-built 내용은 **§14 As-built summary**를 참조.
+> 디렉터리 레이아웃 실제본은 §12.1 + §14를 교차 확인.
 
 착수 순서대로 나열. 각 항목은 구현 세션 첫 질문.
 
@@ -390,3 +399,154 @@ regex 기반이라 quote를 이해하지 못함. 정상적인 `python3 -c "code;
 **영속 효과**: V1 자체는 test-only(PR closed)였지만 파생된 validator fix
 와 live smoke evidence는 main에 영구 기록. pr-create phase가 이제 공식적으로
 "live validation passed" 상태.
+
+---
+
+## 14. As-built summary (canonical, 2026-04-25)
+
+> 본 섹션은 초안이 아니라 **구현 현재 상태의 단일 진원지**. 문서 다른 곳과
+> 충돌하면 여기가 옳다. 업데이트 시 코드 변경과 함께 이 섹션만 확정적으로
+> 유지.
+
+### 14.1 Phase 카탈로그 (10개)
+
+| Task type | 순번 | Phase | Required? | Persona | Timeout | Max attempts |
+|-----------|-----|-------|-----------|---------|---------|--------------|
+| implement | 1 | `plan` | ✅ | planner | 120s | 2 |
+| implement | 2 | `impl` | ✅ | implementer | 600s | 3 |
+| implement | 3 | `commit` | ✅ | (none; pure git) | 30s | 1 |
+| implement | 3.5 | `adr` | ⏹ optional | adr-writer | 180s | 2 |
+| implement | 4 | `pr-create` | ⏹ optional | (none; gh+push) | 60s | 1 |
+| review | 1 | `review-wait` | ✅ | (none; gh polling) | 600s | 1 |
+| review | 2 | `review-fetch` | ✅ | (none; gh+coderabbit parse) | 60s | 2 |
+| review | 3 | `review-apply` | ✅ | implementer (재사용) | 1800s | 1 |
+| review | 4 | `review-reply` | ✅ | (none; gh post) | 30s | 2 |
+| review | 5 | `merge` | ✅ | (none; gh merge + gate) | 120s | 1 |
+
+### 14.2 디렉터리 레이아웃 (현재)
+
+```
+crewai/
+├─ README.md                                  # dual-track 소개 + harness getting-started
+├─ .gitignore                                 # .claude/, state/harness/, __pycache__ 등
+├─ crew/
+│  ├─ CHANNELS.local.md (gitignored)
+│  └─ personas/
+│     ├─ coder.md · critic.md · ue-expert.md  # 기존 debate 트랙 (건드리지 않음)
+│     ├─ planner.md · implementer.md           # MVP-A (2026-04-24)
+│     └─ adr-writer.md                         # MVP-B adr (2026-04-25)
+├─ lib/
+│  ├─ crew-dispatch.sh                         # 기존 debate worker CLI launcher
+│  └─ harness/
+│     ├─ phase.py                              # 모든 phase CLI 진입점
+│     ├─ state.py                              # per-task JSON state machine
+│     ├─ runner.py                             # claude --print headless 래퍼
+│     ├─ checks.sh                             # py_compile + plan boundary
+│     ├─ coderabbit.py                         # review body + inline comment 파서
+│     ├─ gh.py                                 # gh CLI wrapper (sanitize-aware)
+│     ├─ fixtures/coderabbit/*.json            # parser self-test payloads
+│     └─ tests/mock_e2e.py                     # network·LLM-free dry run
+├─ docs/
+│  ├─ RUNBOOK.md                               # 운영 런북 (debate + harness)
+│  └─ harness/
+│     ├─ DESIGN.md                             # 본 문서
+│     └─ MVP-D-PREVIEW.md                      # CodeRabbit 포맷 리서치 + 개정 기록
+├─ skills/                                     # 기존 debate 트랙 (건드리지 않음)
+└─ state/                                      # gitignored scratch (debate *.json + harness/<slug>/)
+```
+
+### 14.3 CLI 진입점 요약
+
+```bash
+# implement task
+python3 lib/harness/phase.py plan      <slug> --intent "<one-liner>" --target-repo <path>
+python3 lib/harness/phase.py impl      <slug>
+python3 lib/harness/phase.py commit    <slug>
+python3 lib/harness/phase.py adr       <slug>        # optional, standalone, non-auto-commit
+python3 lib/harness/phase.py pr-create <slug> [--base main]
+
+# review task (on an existing PR)
+python3 lib/harness/phase.py review-wait  <slug> --pr <n> --base-repo <owner/repo> --target-repo <path>
+python3 lib/harness/phase.py review-fetch <slug>
+python3 lib/harness/phase.py review-apply <slug>
+python3 lib/harness/phase.py review-reply <slug>
+python3 lib/harness/phase.py merge        <slug> [--dry-run]
+```
+
+환경변수:
+- `HARNESS_STATE_ROOT` — state dir override (default: `<repo>/state/harness`)
+- `HARNESS_GIT_AUTHOR_NAME` / `HARNESS_GIT_AUTHOR_EMAIL` — commit author override (없으면 타겟 리포의 git config 사용; 모든 harness-authored 커밋에 `Co-Authored-By: crewai-harness <harness-mvp@local>` trailer 자동 추가)
+
+### 14.4 State schema (implement task)
+
+```json
+{
+  "task_slug": "add-feature-X",
+  "task_type": "implement",
+  "intent": "Add …",
+  "target_repo": "/absolute/path",
+  "created_at": "…", "updated_at": "…",
+  "current_phase": "plan|impl|commit|adr|pr-create",
+  "commit_sha": "…",
+  "pr_number": 42, "pr_url": "https://…",
+  "phases": {
+    "plan":      {"status": …, "attempts": […], "final_output_path": "…"},
+    "impl":      {"status": …, "attempts": […], "final_output_path": null},
+    "commit":    {"status": …, "attempts": […], "final_output_path": null},
+    "pr-create": {"status": …, "attempts": […], "final_output_path": null},
+    "adr":       {"status": …, "attempts": […], "final_output_path": "<docs/adr path>"}  // on-demand
+  }
+}
+```
+
+### 14.5 State schema (review task)
+
+```json
+{
+  "task_slug": "review-PR-1",
+  "task_type": "review",
+  "base_repo": "owner/repo",
+  "pr_number": 1,
+  "target_repo": "/absolute/path",
+  "head_branch": "feat/…",
+  "round": 1,
+  "phases": {
+    "review-wait":  {"status": …, "attempts": […], "review_id": …, "review_sha": "…", "actionable_count": N},
+    "review-fetch": {"status": …, "attempts": […], "comments_path": "…/comments.json"},
+    "review-apply": {"status": …, "attempts": […], "applied_commits": [SHA…], "skipped_comment_ids": [{id, reason}, …]},
+    "review-reply": {"status": …, "attempts": […], "posted_comment_id": …},
+    "merge":        {"status": …, "attempts": […], "merge_sha": "…", "dry_run": bool}
+  }
+}
+```
+
+### 14.6 Auto-apply 필터 (live-smoke 개정 반영)
+
+```python
+# coderabbit.py::is_auto_applicable
+auto = (not is_resolved) and (
+    severity in {nitpick, suggested_tweak, refactor_suggestion}
+    or (criticality or "").lower() == "minor"
+)
+```
+
+### 14.7 Merge gate (fresh-data 반영)
+
+다음 조건 **모두** 충족 시 merge 허용:
+1. `mergeable == MERGEABLE`
+2. `mergeStateStatus == CLEAN`
+3. `reviewDecision ∈ {APPROVED, null}`
+4. `statusCheckRollup` 모두 SUCCESS / NEUTRAL / SKIPPED
+5. `review-apply.skipped_comment_ids` 비어 있음
+6. `gh.fetch_live_review_summary().inline_unresolved_non_auto == 0` (live, not stale comments.json)
+
+### 14.8 재사용 자산 (Tier 1 — DESIGN §3.1에서 선정한 것 중 실제 사용)
+
+- `lib/crew-dispatch.sh` 호출 규약 → `runner.run_claude()` 재구현
+- Persona template (3-section, ~20줄) → planner/implementer/adr-writer 동일 규격
+- Partial output marker → runner.py `timed_out`/`exit_code` 플래그로 승계
+- Persona CLAUDE.md symlink은 **재사용하지 않음** — prompt 내부에 persona text inline. 이 결정은 taget repo의 CLAUDE.md를 오염시키지 않는 안전 경로.
+
+### 14.9 배제된 자산 (Tier 3 — DESIGN §2와 일치)
+
+`skills/crewai-debate/`, `skills/crew-master/`, `skills/hello-debate/`, `lib/crew-dispatch.sh`, `crew/CHANNELS.local.md`, `crew/personas/{coder,critic,ue-expert}.md`는 harness 경로에서 **참조하지 않음**. debate 트랙은 별도로 유지 운용.
