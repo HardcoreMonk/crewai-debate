@@ -64,11 +64,11 @@ def run_claude(
         raise FileNotFoundError(f"cwd does not exist: {cwd}")
 
     with log_path.open("w") as logf:
-        logf.write(f"=== harness.runner.run_claude ===\n")
+        logf.write("=== harness.runner.run_claude ===\n")
         logf.write(f"cwd:     {cwd}\n")
         logf.write(f"timeout: {timeout_sec}s\n")
         logf.write(f"started: {_now()}\n")
-        logf.write(f"cmd:     claude --print --permission-mode bypassPermissions --output-format text <prompt>\n")
+        logf.write("cmd:     claude --print --permission-mode bypassPermissions --output-format text <prompt>\n")
         logf.write(f"--- prompt ---\n{prompt}\n--- /prompt ---\n")
         logf.flush()
 
