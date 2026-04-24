@@ -59,7 +59,7 @@ def _scan(root: Path) -> tuple[list[tuple[Path, str, str]], list[tuple[Path, str
         try:
             with sp.open() as f:
                 data = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             skipped.append((child, f"unreadable state.json: {exc}"))
             continue
         if not isinstance(data, dict):

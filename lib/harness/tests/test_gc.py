@@ -236,6 +236,22 @@ def test_classify_tolerates_schema_invalid_objects():
         assert gc_mod._classify(data) == "in_progress"
 
 
+def test_undecodable_state_json_is_skipped(harness_root, capsys):
+    # state.json containing bytes that aren't valid UTF-8 must route through
+    # the skipped path, not abort the sweep.
+    bad = harness_root / "bad-utf8"
+    bad.mkdir()
+    (bad / "state.json").write_bytes(b"\xff\xfe\x00 not-utf8")
+
+    rc = gc_mod.main(["--root", str(harness_root), "--keep", "10"])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "skipped" in err
+    assert "bad-utf8" in err
+    # The other valid entries are still reported.
+    assert bad.is_dir()
+
+
 def test_keep_zero_retains_only_in_progress(harness_root, capsys):
     rc = gc_mod.main(
         ["--root", str(harness_root), "--keep", "0", "--apply"]
