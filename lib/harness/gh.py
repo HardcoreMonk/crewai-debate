@@ -23,13 +23,20 @@ class GhError(RuntimeError):
 
 
 def _gh(*args: str, timeout: int = 60) -> str:
-    """Run `gh <args>` and return stdout. Raise GhError on non-zero exit."""
+    """Run `gh <args>` and return stdout. Raise GhError on non-zero exit or timeout."""
     if not shutil.which("gh"):
         raise GhError("gh CLI not on PATH", exit_code=127)
-    proc = subprocess.run(
-        ["gh", *args],
-        capture_output=True, text=True, timeout=timeout, check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["gh", *args],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise GhError(
+            f"gh {args[0]} timed out after {timeout}s",
+            exit_code=124,
+            stderr=(e.stderr or b"").decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or ""),
+        ) from e
     if proc.returncode != 0:
         raise GhError(
             f"gh {args[0]} failed (exit={proc.returncode})",

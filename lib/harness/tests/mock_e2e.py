@@ -151,6 +151,15 @@ def _patch_gh(scratch_repo: Path) -> None:
     gh.merge_pr = fake_merge_pr
 
 
+def _patch_push(scratch_repo: Path) -> None:
+    """Short-circuit the gh-token push — the scratch repo has no origin remote."""
+    def fake_push(repo, branch):
+        return subprocess.CompletedProcess(
+            args=["git", "push"], returncode=0, stdout="(mock push)\n", stderr=""
+        )
+    phase.push_branch_via_gh_token = fake_push
+
+
 def _patch_runner(scratch_repo: Path) -> None:
     """Fake implementer: for each apply prompt, infer the target file from the
     prompt body and write a canned edit matching the CodeRabbit nitpick diff.
@@ -221,6 +230,7 @@ def main() -> int:
 
     _patch_gh(scratch)
     _patch_runner(scratch)
+    _patch_push(scratch)
 
     # Shared CLI args namespace (argparse.Namespace substitute).
     class NS:
@@ -256,17 +266,34 @@ def main() -> int:
     # nitpick + refactor => auto. potential_issue filtered. resolved filtered.
     _assert(len(auto) == 2, f"2 auto-applicable (got {len(auto)})", failures)
 
-    # 3) review-apply (fake_run_claude only edits files matching the nitpick fixture).
+    # 3) review-apply — scratch mirrors both fixture paths, so fake_run_claude
+    # makes deterministic edits and both auto-applicable comments commit cleanly.
     print("\n== review-apply ==")
     rc = phase.cmd_review_apply(a)
     _assert(rc == 0, "apply exit 0", failures)
     s = state.load_state(task_slug)
     applied = s["phases"]["review-apply"]["applied_commits"]
     skipped = s["phases"]["review-apply"]["skipped_comment_ids"]
-    # The nitpick fixture targets lib/harness/state.py but our scratch has lib/state.py.
-    # So boundary check will fail OR the edit won't match. Either way the phase completes.
     print(f"    applied={len(applied)} skipped={len(skipped)}")
     _assert(s["phases"]["review-apply"]["status"] == state.STATUS_COMPLETED, "apply completed", failures)
+    _assert(len(applied) == 2, f"2 autofix commits made (got {len(applied)})", failures)
+    _assert(len(skipped) == 0, f"no comments skipped during apply (got {len(skipped)})", failures)
+    # Verify each autofix commit exists and touched the expected file.
+    if len(applied) >= 2:
+        log1 = subprocess.check_output(
+            ["git", "-C", str(scratch), "show", "--name-only", "--format=", applied[0]],
+            text=True).strip().splitlines()
+        log2 = subprocess.check_output(
+            ["git", "-C", str(scratch), "show", "--name-only", "--format=", applied[1]],
+            text=True).strip().splitlines()
+        touched = set(log1) | set(log2)
+        _assert("lib/harness/state.py" in touched, "state.py was touched by an autofix", failures)
+        _assert("lib/harness/runner.py" in touched, "runner.py was touched by an autofix", failures)
+        # Content-level check — the nitpick rename actually landed.
+        state_py = (scratch / "lib" / "harness" / "state.py").read_text()
+        _assert("def save_state(st):" in state_py, "state.py has renamed parameter", failures)
+        runner_py = (scratch / "lib" / "harness" / "runner.py").read_text()
+        _assert('"""Invoke claude."""' in runner_py, "runner.py has new docstring", failures)
 
     # 4) review-reply
     print("\n== review-reply ==")

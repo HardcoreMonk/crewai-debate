@@ -36,12 +36,24 @@ STATUS_FAILED = "failed"
 _CREWAI_ROOT = Path(__file__).resolve().parents[2]
 STATE_ROOT = Path(os.environ.get("HARNESS_STATE_ROOT") or _CREWAI_ROOT / "state" / "harness")
 
+# Task slugs become directory names under STATE_ROOT. Only allow a single
+# safe segment — no path traversal, no absolute paths, no shell metacharacters.
+_SLUG_RE = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _validate_slug(task_slug: str) -> None:
+    if not isinstance(task_slug, str) or not _SLUG_RE.fullmatch(task_slug):
+        raise ValueError(
+            f"invalid task_slug: {task_slug!r} — must match {_SLUG_RE.pattern}"
+        )
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def task_dir(task_slug: str) -> Path:
+    _validate_slug(task_slug)
     return STATE_ROOT / task_slug
 
 
@@ -273,10 +285,25 @@ def set_merge_result(state: dict[str, Any], *, sha: str | None, dry_run: bool) -
 
 
 def bump_round(state: dict[str, Any]) -> int:
+    """Advance to the next review round. Reset every per-round field so
+    stale data from the previous round cannot leak forward."""
     state["round"] = state.get("round", 1) + 1
-    # Reset per-round phase slots for re-review loop
-    for phase in ("review-wait", "review-fetch", "review-apply", "review-reply"):
-        state["phases"][phase]["status"] = STATUS_PENDING
-        state["phases"][phase]["attempts"] = []
+    state["phases"]["review-wait"].update({
+        "status": STATUS_PENDING, "attempts": [],
+        "review_id": None, "review_sha": None, "actionable_count": None,
+    })
+    state["phases"]["review-fetch"].update({
+        "status": STATUS_PENDING, "attempts": [],
+        "comments_path": None,
+    })
+    state["phases"]["review-apply"].update({
+        "status": STATUS_PENDING, "attempts": [],
+        "applied_commits": [], "skipped_comment_ids": [],
+    })
+    state["phases"]["review-reply"].update({
+        "status": STATUS_PENDING, "attempts": [],
+        "posted_comment_id": None,
+    })
+    state["current_phase"] = PHASES_REVIEW[0]
     save_state(state)
     return state["round"]

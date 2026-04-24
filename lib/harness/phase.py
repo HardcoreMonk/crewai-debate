@@ -377,10 +377,10 @@ def cmd_commit(args) -> int:
     msg = f"{title}\n\n{body}".strip()
 
     attempt = state.start_attempt(s, "commit")
+    # Use `git add -A -- <path>` so deletes/renames under a planned path
+    # are staged too, not just files that still exist.
     for f in files:
-        fp = target_repo / f
-        if fp.exists():
-            git(target_repo, "add", f)
+        git(target_repo, "add", "-A", "--", f)
 
     author_name = os.environ.get("HARNESS_GIT_AUTHOR_NAME", "harness-mvp")
     author_email = os.environ.get("HARNESS_GIT_AUTHOR_EMAIL", "harness@local")
@@ -525,11 +525,39 @@ def cmd_review_wait(args) -> int:
                     newest_sig = sig
                     newest_review = r
 
+            # Also inspect issue comments — CodeRabbit delivers skip/fail markers
+            # there (not as a PR review) per MVP-D-PREVIEW §2.2. Checking only
+            # reviews would hang the poll loop for the full timeout on a
+            # skipped/failed review.
+            issue_sig: coderabbit.ReviewSignal | None = None
+            try:
+                issues = gh.list_issue_comments(base_repo, pr_number)
+            except gh.GhError as e:
+                issues = []
+                logf.write(f"poll {poll_count}: list_issue_comments failed: {e}\n")
+            for ic in issues:
+                if not coderabbit.is_coderabbit_author(ic.get("user")):
+                    continue
+                body = ic.get("body") or ""
+                sig = coderabbit.classify_review_body(body)
+                if sig.kind in ("skipped", "failed"):
+                    if issue_sig is None or (ic.get("created_at") or "") > (getattr(issue_sig, "submitted_at", "") or ""):
+                        issue_sig = sig
+                        issue_sig.submitted_at = ic.get("created_at")
+
             logf.write(
                 f"poll {poll_count} at {now_iso}: reviews={len(reviews)} "
-                f"bot={len(bot_reviews)} kind={newest_sig.kind if newest_sig else None}\n"
+                f"bot={len(bot_reviews)} kind={newest_sig.kind if newest_sig else None} "
+                f"issue_kind={issue_sig.kind if issue_sig else None}\n"
             )
             logf.flush()
+
+            # Skip/fail signals from issue comments short-circuit immediately.
+            if issue_sig and issue_sig.kind in ("skipped", "failed"):
+                note = f"CodeRabbit review {issue_sig.kind} (issue comment marker)"
+                state.finish_attempt(s, "review-wait", exit_code=1, note=note)
+                state.set_phase_status(s, "review-wait", state.STATUS_FAILED)
+                fatal(note)
 
             if newest_sig is not None:
                 if newest_sig.kind == "complete":
@@ -766,19 +794,30 @@ def cmd_review_apply(args) -> int:
             reset_target_repo(target_repo)
 
     attempt_log.write_text("\n".join(summary_lines) + "\n")
-    state.finish_attempt(s, "review-apply", exit_code=0,
-                         note=f"applied={len(s['phases']['review-apply']['applied_commits'])} "
-                              f"skipped={len(s['phases']['review-apply']['skipped_comment_ids'])}")
-    state.set_phase_status(s, "review-apply", state.STATUS_COMPLETED)
 
-    # Push autofix commits so CodeRabbit can re-review.
+    # Push autofix commits *before* marking the phase complete. A failed push
+    # means the remote PR branch is stale, so we must not claim success and
+    # let review-reply/merge run against drift.
+    push_summary = "no commits to push"
     if s["phases"]["review-apply"]["applied_commits"]:
         push = push_branch_via_gh_token(target_repo, s["head_branch"])
         if push.returncode != 0:
-            print(f"warning: push failed — {push.stderr.strip()}", file=sys.stderr)
+            note = f"push failed — {push.stderr.strip()}"
+            state.finish_attempt(s, "review-apply", exit_code=push.returncode or 1, note=note)
+            state.set_phase_status(s, "review-apply", state.STATUS_FAILED)
+            print(f"ERROR: {note}", file=sys.stderr)
+            return 1
+        push_summary = f"pushed {len(s['phases']['review-apply']['applied_commits'])} commit(s)"
+
+    state.finish_attempt(s, "review-apply", exit_code=0,
+                         note=(f"applied={len(s['phases']['review-apply']['applied_commits'])} "
+                               f"skipped={len(s['phases']['review-apply']['skipped_comment_ids'])} "
+                               f"push=ok"))
+    state.set_phase_status(s, "review-apply", state.STATUS_COMPLETED)
 
     for line in summary_lines:
         print(line)
+    print(f"review-apply: {push_summary}")
     return 0
 
 

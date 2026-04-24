@@ -24,10 +24,18 @@ die() { echo "checks: $*" >&2; exit "${2:-1}"; }
 extract_plan_files() {
   local plan="$1"
   [ -f "$plan" ] || die "plan file missing: $plan" 2
+  # Must stay aligned with lib/harness/phase.py::parse_section/parse_plan_files:
+  #   - header match is case-insensitive on "files"
+  #   - bullet match tolerates leading whitespace before `-`
   awk '
-    /^##[[:space:]]+files[[:space:]]*$/ { flag=1; next }
-    /^##[[:space:]]+/                   { flag=0 }
-    flag && /^-[[:space:]]+/            { sub(/^-[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); print }
+    BEGIN { IGNORECASE = 1 }
+    /^[[:space:]]*##[[:space:]]+files[[:space:]]*$/ { flag=1; next }
+    /^[[:space:]]*##[[:space:]]+/                   { flag=0 }
+    flag && /^[[:space:]]*-[[:space:]]+/            {
+      sub(/^[[:space:]]*-[[:space:]]+/, "")
+      sub(/[[:space:]]+$/, "")
+      print
+    }
   ' "$plan"
 }
 

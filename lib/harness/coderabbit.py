@@ -155,10 +155,11 @@ def _detect_severity(body: str) -> str:
     for name, pat in SEVERITY_PATTERNS:
         if pat.search(body):
             return name
-    # Safest default when CodeRabbit omits the emoji: treat as nitpick
-    # (eligible for auto-apply). This matches the bot's actual behaviour for
-    # low-severity suggestions it doesn't tag.
-    return "nitpick"
+    # If CodeRabbit changes wording/emoji or we hit a format we haven't seen,
+    # fall back to an inert marker. Auto-apply eligibility checks SAFE_TYPES
+    # explicitly, so "unknown" will never be picked up — parser drift fails
+    # closed instead of silently becoming an autofix.
+    return "unknown"
 
 
 def _detect_criticality(body: str) -> str | None:
