@@ -260,6 +260,8 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 | 2026-04-25 | V1 pr-create live validation PASS + `validate_tests_command` shlex/quote-aware refactor (commit `6ce8454`). PR #2 created by harness, auto-closed (test-only). 자세한 내용 §13.7. |
 | 2026-04-25 | §13.6 #3b MVP-B `adr` phase 구현 + skipped nitpick 2건 polish (pagination cap 경고 / boundary delete 주석 명시). |
 | 2026-04-25 | Full-chain dogfood 첫 완주 (PR #3 merged `646c131`) — 10 phase 중 9개 harness 실행, CodeRabbit 5-round 수렴(actionable 2→0), merge는 friction #8(`reviewDecision=""`)로 out-of-band. §13.8 부록 + §13.6 #7-1~#7-8 + #8 등재. |
+| 2026-04-25 | §13.6 **#8 해결** (PR #5 merged `046a089`) — `gh.is_pr_mergeable()`가 `reviewDecision=""`을 `None`과 동치로 허용. 10 tests (test_gh_gate.py). |
+| 2026-04-25 | §13.6 **#10 등재** (PR #6 검증 중 발견, 미해결) — CodeRabbit zero-actionable 케이스가 formal review 없이 issue comment로만 들어와 `cmd_review_wait`가 감지 실패. #8 fix만으로는 self-managed repo full-10-phase 머지가 여전히 막힘. PR #6 자체는 OOB 머지. |
 
 ---
 
@@ -382,8 +384,10 @@ PR#1 적용 결과: 18 → 6 eligible (전부 Minor, 전부 docs/markdown/lint).
   - **#7-6 commit/PR body가 plan.md `## changes` verbatim** — 내부 coordination 문구(e.g. "ALREADY CREATED … DO NOT regenerate")와 stale reference가 public git log + GitHub PR body로 유출. Fix: plan.md에 `<!-- internal -->` 마커를 추가해 commit body 생성 시 스트립, 또는 plan에 별도 `## commit-body` 섹션을 두어 `## changes`와 분리.
   - **#7-7 (major) review-wait staleness across rounds** — `bump_round()`가 review-wait metadata를 reset하더라도 cmd_review_wait의 "newest review" 선택 로직에 **이전 round의 review_sha를 제외하는 필터가 없음**. 재리뷰가 아직 안 올라온 상태에서 호출하면 stale review를 재사용하고 round를 잘못 전진시킴. Fix: review-wait이 state.json의 `seen_review_ids` 집합을 들고 있거나, HEAD sha와 review.commit_id를 비교해 diff일 때만 accept.
   - **#7-8 CodeRabbit 시간당 review rate limit** — 무료/미결제 플랜에서 rapid push(≤1h)가 limit에 걸림. 자동 회복 후 `@coderabbitai review` 수동 comment가 필요할 수도. Fix: review-wait poll이 issue comment에서 `rate limited` 마커 감지 → 자동 대기 + 해제 시점에 `@coderabbitai review` 자동 포스팅.
-- **#8 Harness gate receiver-less merge unsupport (신규, PR #3 §13.8에서 발견)** — (항목 번호 정리상 #7 group과 분리) — 리뷰 규칙이 없는 repo에서 gh API가 `reviewDecision=""`을 반환하면 현재 gate `rd in (None, "APPROVED")`로 영구 차단. Self-managed repo(혼자 운영)에서는 approver가 없어 harness-merge가 원리적으로 불가. Fix: `gh.is_pr_mergeable()`에서 `""`를 `None`과 동치 처리, 또는 `--allow-no-review` 명시 플래그.
-  - 우회: 이 PR #3은 `gh pr merge 3 --squash --delete-branch`로 out-of-band 머지 후, state.json에 out-of-band 사실을 기록.
+- **#8 Harness gate receiver-less merge unsupport** — ✅ **해결** (PR #5, commit `046a089`). `gh.is_pr_mergeable()`가 이제 `reviewDecision`을 `(None, "", "APPROVED")` 중 하나로 허용. `""`는 gh CLI가 "리뷰 규칙 없음"을 표현하는 방식이라 `None`과 동치 처리. 다른 값(`CHANGES_REQUESTED`/`REVIEW_REQUIRED` 등)은 계속 차단. `lib/harness/tests/test_gh_gate.py` 10 cases로 regression 방지.
+  - ⚠️ **#10도 함께 해결되어야 self-managed repo에서 harness-merge 완주 가능** — #8 혼자서는 PR #6 검증에서 review-wait가 먼저 막혔음 (아래 #10 참조).
+  - 역사: 이 버그 때문에 PR #3과 PR #4 모두 OOB `gh pr merge --squash`로 머지했고, 고친 PR #5 자체도 (chicken-and-egg) OOB 머지.
+- **#10 Zero-actionable CodeRabbit review detection (신규, PR #6 검증 중 발견)** — ⏳ **open**. CodeRabbit이 findings가 0건인 PR에 대해 `"No actionable comments were generated in the recent review. 🎉"` 문구를 **issue comment로만** 포스트하고 formal review 객체는 만들지 않음. `coderabbit.py::classify_review_body`는 `**Actionable comments posted: N**` 패턴만 `kind=complete`로 인식해서 이 케이스가 감지 안 됨 → `cmd_review_wait`가 600s 타임아웃까지 대기 후 `status=failed`. PR #6 (`mark §13.6 #8 resolved` docs-only)에서 #8 fix의 end-to-end 검증을 시도했다가 바로 이 문제로 OOB로 돌아감. Fix: (a) `classify_review_body`에 `NO_ACTIONABLE_RE = r"No actionable comments were generated"` 패턴 추가 → `kind=complete, actionable_count=0`; (b) `cmd_review_wait`의 issue-comment poll 분기에서 `complete` kind도 accept (현재는 `skipped`/`failed`만 short-circuit). 테스트 포인트: zero-finding docs PR이 harness-merge로 완주 가능해야 한다.
 
 ### 13.7 V1 pr-create live smoke + validator shlex refactor (2026-04-25)
 
