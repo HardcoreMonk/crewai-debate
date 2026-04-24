@@ -1,7 +1,10 @@
 node_modules/
 *.log
+__pycache__/
+*.pyc
 state/*.json
 !state/.gitkeep
+state/harness/
 .DS_Store
 crew/CHANNELS.local.md
 .playwright-mcp/

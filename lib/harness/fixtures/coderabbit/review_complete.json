@@ -1,0 +1,9 @@
+{
+  "id": 2987654321,
+  "user": {"login": "coderabbitai[bot]", "type": "Bot", "id": 136622811},
+  "body": "**Actionable comments posted: 3**\n\n<details>\n<summary>Review details</summary>\nConfiguration used: .coderabbit.yaml\nReview profile: CHILL\n</details>\n\n<details>\n<summary>Files ignored due to path filters (0)</summary>\n\n</details>\n\n",
+  "state": "COMMENTED",
+  "commit_id": "abc123def456abc123def456abc123def456abcd",
+  "submitted_at": "2026-04-25T03:12:45Z",
+  "html_url": "https://github.com/HardcoreMonk/crewai-debate/pull/1#pullrequestreview-2987654321"
+}

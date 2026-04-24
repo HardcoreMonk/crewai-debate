@@ -1,0 +1,8 @@
+{
+  "id": 2987654323,
+  "user": {"login": "coderabbitai[bot]", "type": "Bot", "id": 136622811},
+  "body": "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!CAUTION]\n> ## Review skipped\n>\n> Auto reviews are disabled on this repository. Use `@coderabbitai review` in a comment to manually trigger a review.\n\n<!-- end of auto-generated comment: skip review by coderabbit.ai -->\n",
+  "state": "COMMENTED",
+  "commit_id": "111aaa222bbb333ccc444ddd555eee666fff7777",
+  "submitted_at": "2026-04-25T03:05:00Z"
+}

@@ -1,14 +1,65 @@
-# crewai-debate
+# crewai-debate + harness
 
-OpenClaw skills that run a Developer↔Reviewer debate on a coding topic and deliver the full transcript into a chat channel (currently Discord). Personal dev workflow tool — optimized for Unreal Engine C++ plan review before writing code.
+Two cooperating tracks in one repo:
+
+1. **Debate track** (`skills/crewai-debate/`, `skills/crew-master/`) — Discord-delivered Developer↔Reviewer debate on a coding topic. Personal dev workflow tool, optimized for Unreal Engine C++ plan review before writing code. Single-turn LLM persona switching.
+2. **Harness track** (`lib/harness/`, `crew/personas/{planner,implementer}.md`) — git-native multi-phase AI pipeline. MVP-A (`plan → impl → commit`) turns a one-line intent into a commit. MVP-D (`review-wait → fetch → apply → reply → merge`) auto-applies CodeRabbit review feedback and gates merge. External script orchestrates; each phase spawns a headless `claude --print` invocation.
+
+See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-PREVIEW.md`](docs/harness/MVP-D-PREVIEW.md) for the harness side, and the sections below for the debate side.
 
 ## What's in here
 
+### Debate track
 - `skills/crewai-debate/SKILL.md` — the production single-turn debate skill. One assistant response contains the full Dev↔Reviewer iterations and a final verdict block.
 - `skills/hello-debate/SKILL.md` — minimum-viable smoke test (one Dev + one Reviewer, no loop).
 - `skills/crew-master/SKILL.md` — multi-channel Discord crew: `@mention` dispatches to specialist workers (`codex-critic`, `claude-coder`, `codex-ue-expert`) from `#crew-master`. See the "Crew" section below for the full mechanics.
 - `lib/crew-dispatch.sh` — helper that runs the target worker's CLI in its persona `cwd` and posts the reply to the worker's Discord channel.
 - `crew/personas/{critic,coder,ue-expert}.md` — persona system prompts loaded by each worker via an `AGENTS.md` / `CLAUDE.md` symlink under `~/.openclaw/workspace/crew/<role>/`.
+
+### Harness track
+- `lib/harness/phase.py` — phase executor CLI. Subcommands: `plan`, `impl`, `commit`, `review-wait`, `review-fetch`, `review-apply`, `review-reply`, `merge`.
+- `lib/harness/state.py` — per-task JSON state machine (`state/harness/<slug>/state.json`).
+- `lib/harness/runner.py` — `claude --print` headless wrapper shared by all LLM-invoking phases.
+- `lib/harness/checks.sh` — plan-boundary diff check + Python syntax verification.
+- `lib/harness/coderabbit.py` — CodeRabbit review parsing (walkthrough markers, severity × criticality, AI-agent prompt extraction).
+- `lib/harness/gh.py` — thin `gh` CLI wrapper (PR view, list reviews/comments, GraphQL review-thread resolution, post comment, merge). Token-leak-sanitized via `_sanitize_completed`.
+- `crew/personas/planner.md`, `crew/personas/implementer.md` — harness-specific persona system prompts.
+- `lib/harness/tests/mock_e2e.py` — mock E2E dry-run (gh + runner + push monkey-patched).
+- `lib/harness/fixtures/coderabbit/*.json` — reference CodeRabbit payloads for parser self-test.
+
+## Harness — getting started
+
+**MVP-A pipeline** — turn an intent into a commit:
+
+```bash
+python3 lib/harness/phase.py plan add-feature-X \
+  --intent "Add …" \
+  --target-repo /path/to/target
+
+python3 lib/harness/phase.py impl   add-feature-X
+python3 lib/harness/phase.py commit add-feature-X
+```
+
+**MVP-D pipeline** — auto-apply CodeRabbit feedback on an existing PR:
+
+```bash
+python3 lib/harness/phase.py review-wait  review-PR-42 \
+  --pr 42 --base-repo owner/repo \
+  --target-repo /path/to/local/clone
+
+python3 lib/harness/phase.py review-fetch review-PR-42
+python3 lib/harness/phase.py review-apply review-PR-42      # LLM + validate + push
+python3 lib/harness/phase.py review-reply review-PR-42      # post summary comment
+python3 lib/harness/phase.py merge        review-PR-42 --dry-run
+# …drop --dry-run when gate is green and you trust the autofixes
+```
+
+Autofix validation is per-target-repo:
+- `.harness/validate.sh` (executable) — preferred; you define the check
+- `pyproject.toml` declaring pytest — `python3 -m pytest -q` is used
+- otherwise — Python syntax check only (logged as `syntax-only` mode)
+
+Merge gate blocks when (a) `mergeable != MERGEABLE` / `mergeStateStatus != CLEAN`, (b) CI checks are not SUCCESS/NEUTRAL, (c) the apply phase skipped any comment, or (d) CodeRabbit left unresolved **non-auto-applicable** comments (Major/Critical).
 
 ## How it works
 
@@ -90,11 +141,22 @@ skills/
   hello-debate/SKILL.md    # one-round smoke test
   crew-master/SKILL.md     # multi-channel worker dispatcher (v0.1)
 crew/
-  personas/                # committed persona system prompts
+  personas/
+    critic.md coder.md ue-expert.md   # debate track personas
+    planner.md implementer.md          # harness track personas
   CHANNELS.local.md        # gitignored channelId scratch
 lib/
-  crew-dispatch.sh         # worker CLI launcher + Discord poster
-state/                     # gitignored sidecar dir (debate scratch)
+  crew-dispatch.sh         # debate worker CLI launcher + Discord poster
+  harness/                 # harness track
+    phase.py state.py runner.py coderabbit.py gh.py
+    checks.sh
+    fixtures/coderabbit/   # parser self-test payloads
+    tests/mock_e2e.py      # network/LLM-free dry run
+docs/
+  harness/
+    DESIGN.md              # brainstorm → phase contracts → retrospectives
+    MVP-D-PREVIEW.md       # CodeRabbit research + phase split
+state/                     # gitignored scratch (debate + harness/<slug>/)
 ```
 
 ## Status
