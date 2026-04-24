@@ -34,12 +34,14 @@ def _non_negative_int(raw: str) -> int:
 
 
 def _classify(state_obj: dict[str, Any]) -> str:
-    phases = state_obj.get("phases") or {}
+    phases = state_obj.get("phases")
+    if not isinstance(phases, dict):
+        phases = {}
     for ph in phases.values():
         if isinstance(ph, dict) and ph.get("status") in _NON_TERMINAL_STATUSES:
             return "in_progress"
     current = state_obj.get("current_phase")
-    if current not in _TERMINAL_CURRENT_PHASES:
+    if not isinstance(current, str) or current not in _TERMINAL_CURRENT_PHASES:
         return "in_progress"
     return "completed"
 

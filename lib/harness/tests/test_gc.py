@@ -220,6 +220,22 @@ def test_non_dict_state_json_is_skipped(harness_root, capsys):
         assert (harness_root / slug).is_dir()
 
 
+def test_classify_tolerates_schema_invalid_objects():
+    # Malformed-but-object payloads must be classified as in_progress (safe
+    # default — GC will not prune them) and must not raise.
+    cases = [
+        {},
+        {"phases": []},                                   # phases is a list
+        {"phases": "oops"},                               # phases is a string
+        {"phases": {"plan": "completed"}},                # phase entry is a string, not dict
+        {"phases": {"plan": {}}, "current_phase": None},  # missing status, non-str current
+        {"phases": {}, "current_phase": 42},              # unhashable-membership-safe but non-str
+        {"phases": {}, "current_phase": ["merge"]},       # list instead of str
+    ]
+    for data in cases:
+        assert gc_mod._classify(data) == "in_progress"
+
+
 def test_keep_zero_retains_only_in_progress(harness_root, capsys):
     rc = gc_mod.main(
         ["--root", str(harness_root), "--keep", "0", "--apply"]
