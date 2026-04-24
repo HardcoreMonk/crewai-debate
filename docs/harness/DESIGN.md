@@ -245,6 +245,7 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 | 2026-04-25 | MVP-D 구현 완료 + mocked E2E PASS (commit `d69e38a`). |
 | 2026-04-25 | MVP-D live smoke on PR#1 완주 — 5 phase 전원 실행, 머지 게이트 의도적 차단. §13 부록 추가. |
 | 2026-04-25 | CodeRabbit 10 finding fix (commit `0fd04a0`) — 1 false positive 기록, 1 design-level deferred. |
+| 2026-04-25 | Round-4 fixes + §13.6 #1/#3 구현 (commit `f811840`) — token sanitize, None-line ranges, tests_cmd validator, semantic validation, non-auto gate count. §13.6 상태 업데이트. |
 
 ---
 
@@ -345,9 +346,9 @@ PR#1 적용 결과: 18 → 6 eligible (전부 Minor, 전부 docs/markdown/lint).
 | criticality 축 | coderabbit.py | 실제 format 반영, 필터 정확도↑ |
 | push 선결 → phase complete | phase.py::cmd_review_apply | 원격 drift 방지 (§4.5 게이트 보호) |
 
-### 13.6 MVP-D v2 후속 작업
+### 13.6 MVP-D v2 후속 작업 — 상태 (2026-04-25)
 
-- **autofix 의미적 검증**: repo별 `test.sh` 컨벤션 또는 `pyproject.toml`/`package.json` 감지 → 커밋 전 실행 (c#3138919572)
-- **재리뷰 루프 N=2 실전 검증**: 이번 0fd04a0 푸시가 round 2. CodeRabbit이 새 피드백 주면 동일 파이프라인 재돌림
-- **머지 게이트의 non-auto 미해결 카운트**: 현재 게이트는 `reviewDecision != APPROVED`로 간접 차단. 명시적 "unresolved non-autofixable" 카운트 노출이 더 선명
-- **CodeRabbit 외 리뷰봇 대응 대비**: 어휘 일반화 시점 미정
+- **#1 autofix 의미적 검증** — ✅ **구현** (`f811840`). `discover_validator()`가 `.harness/validate.sh` (convention) → `pyproject.toml` pytest → `syntax-only` 순으로 선택. `_apply_one_comment` 내부에서 syntax 검사 이후, 커밋 이전에 실행. 실패 시 해당 코멘트 skip.
+- **#2 재리뷰 루프 N=2 실전 검증** — ✅ **유도 검증 완료**. PR#1이 자연스럽게 4 라운드 수렴 (actionable 18→3→2→1). `bump_round()` 호출 없이 각 커밋 push로 CodeRabbit 재리뷰가 트리거됐고 feedback이 단조 감소. `bump_round()`는 명시적 재시작(예: round 실패 후 재도전) 용도로 유지 — 자연스러운 append-commit 재리뷰에는 불필요.
+- **#3 머지 게이트 non-auto 미해결 카운트** — ✅ **구현** (`f811840`). `_count_unresolved_non_auto()`가 `comments.json`에서 `!is_resolved && !auto_applicable`를 세어 게이트에 명시적 변수로 추가. `reviewDecision` 간접 프록시에 의존하지 않음.
+- **#4 CodeRabbit 외 리뷰봇 대응** — ⏸ **연기**. 현재 대상 리뷰봇 없음. 필요 시점에 author 화이트리스트 확장 + severity 매핑 테이블 추상화.
