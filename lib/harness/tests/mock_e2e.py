@@ -303,17 +303,25 @@ def main() -> int:
     _assert(s["phases"]["review-reply"]["status"] == state.STATUS_COMPLETED, "reply completed", failures)
     _assert(s["phases"]["review-reply"]["posted_comment_id"] == 9999, "posted comment id = 9999", failures)
 
-    # 5) merge (dry-run, since skipped may be non-empty)
+    # 5) merge (dry-run). Two gates now block: skipped comments (§4.5) or
+    # unresolved non-auto-applicable comments (§13.6 #3). Our fixtures include
+    # one `potential_issue` that is deliberately non-auto, so expect the
+    # unresolved-non-auto gate to engage → dry-run BLOCKS. This proves the
+    # new gate is wired correctly.
     print("\n== merge (dry-run) ==")
-    rc = phase.cmd_merge(a)
-    if skipped:
-        # Gate blocks because skipped_comments > 0 — expected behaviour.
-        s = state.load_state(task_slug)
+    try:
+        rc = phase.cmd_merge(a)
+    except SystemExit:
+        rc = 1
+    s = state.load_state(task_slug)
+    unresolved_non_auto = phase._count_unresolved_non_auto(s)
+    print(f"    unresolved_non_auto={unresolved_non_auto} skipped={len(skipped)}")
+    if skipped or unresolved_non_auto > 0:
         _assert(s["phases"]["merge"]["status"] == state.STATUS_FAILED,
-                f"merge blocked by skipped ({len(skipped)})", failures)
+                f"merge blocked (skipped={len(skipped)}, non_auto={unresolved_non_auto})",
+                failures)
     else:
         _assert(rc == 0, "merge dry-run exit 0", failures)
-        s = state.load_state(task_slug)
         _assert(s["phases"]["merge"]["status"] == state.STATUS_COMPLETED, "merge dry-run completed", failures)
         _assert(s["phases"]["merge"]["dry_run"] is True, "merge flagged dry_run", failures)
 

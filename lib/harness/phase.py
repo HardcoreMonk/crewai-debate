@@ -108,6 +108,31 @@ def extract_tests_command(plan_text: str) -> str:
     return normalize_tests_command(body.strip())
 
 
+# Forbidden shell metacharacters per planner persona contract — reject before
+# subprocess.run(shell=True). Defence-in-depth against planner hallucination:
+# even when the persona says "one command only", validate here too.
+_TESTS_CMD_FORBIDDEN = (
+    (r";", "command separator `;`"),
+    (r"&&", "chain `&&`"),
+    (r"\|\|", "chain `||`"),
+    (r"\$\(", "command substitution `$(...)`"),
+    (r"`", "backtick substitution"),
+    (r">>?[^\s]", "redirection"),
+    (r"\n", "newline (multi-line block)"),
+)
+
+
+def validate_tests_command(cmd: str) -> str | None:
+    """Return error string if `cmd` contains forbidden shell metacharacters,
+    else None. Used before subprocess.run(shell=True) on planner output."""
+    if not cmd:
+        return "tests command is empty"
+    for pat, label in _TESTS_CMD_FORBIDDEN:
+        if re.search(pat, cmd):
+            return f"tests command rejected: {label} present in {cmd!r}"
+    return None
+
+
 def normalize_tests_command(cmd: str) -> str:
     """Best-effort env adaptation. When `python` is unavailable but `python3` is
     (e.g., pyenv without a `python` shim), rewrite the bare `python` invocations."""
@@ -197,6 +222,31 @@ def reset_target_repo(repo: Path) -> None:
     git(repo, "clean", "-fd")
 
 
+_TOKEN_URL_RE = re.compile(r"https://x-access-token:[^@\s]+@")
+
+
+def _sanitize_token(text: str) -> str:
+    """Replace the token portion of any inlined auth URL so it cannot leak
+    into caller error logs. The whole URL is still identifiable as a GitHub
+    push URL (for debuggability) but the secret is redacted."""
+    if not text:
+        return text
+    return _TOKEN_URL_RE.sub("https://x-access-token:[REDACTED]@", text)
+
+
+def _sanitize_completed(proc: subprocess.CompletedProcess) -> subprocess.CompletedProcess:
+    """Return a new CompletedProcess with stdout/stderr scrubbed of tokens.
+    args is also scrubbed in case a caller prints them."""
+    if not isinstance(proc.stdout, str) and not isinstance(proc.stderr, str):
+        return proc
+    return subprocess.CompletedProcess(
+        args=[_sanitize_token(a) if isinstance(a, str) else a for a in (proc.args or [])],
+        returncode=proc.returncode,
+        stdout=_sanitize_token(proc.stdout) if isinstance(proc.stdout, str) else proc.stdout,
+        stderr=_sanitize_token(proc.stderr) if isinstance(proc.stderr, str) else proc.stderr,
+    )
+
+
 def push_branch_via_gh_token(repo: Path, branch: str) -> subprocess.CompletedProcess:
     """git push using a gh-issued token inlined in the URL.
 
@@ -204,13 +254,17 @@ def push_branch_via_gh_token(repo: Path, branch: str) -> subprocess.CompletedPro
     harness push from a process that only has the gh CLI authenticated (common
     in environments like ours where no global .gitconfig exists).
     Falls back to a plain `git push origin` when the origin isn't HTTPS github.
+
+    The returned CompletedProcess is always sanitized: the inlined token never
+    appears in args/stdout/stderr, so upstream `push.stderr.strip()` prints and
+    log writes cannot leak the credential.
     """
     token_proc = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
     if token_proc.returncode != 0 or not token_proc.stdout.strip():
-        return token_proc
+        return _sanitize_completed(token_proc)
     origin_proc = git(repo, "remote", "get-url", "origin")
     if origin_proc.returncode != 0:
-        return origin_proc
+        return _sanitize_completed(origin_proc)
     origin_url = origin_proc.stdout.strip()
     token = token_proc.stdout.strip()
     if origin_url.startswith("https://github.com/"):
@@ -219,12 +273,13 @@ def push_branch_via_gh_token(repo: Path, branch: str) -> subprocess.CompletedPro
             f"https://x-access-token:{token}@github.com/",
             1,
         )
-        return subprocess.run(
+        raw = subprocess.run(
             ["git", "-C", str(repo), "push", auth_url, f"{branch}:{branch}"],
             capture_output=True, text=True,
         )
+        return _sanitize_completed(raw)
     # Non-https github origin — try plain push.
-    return git(repo, "push", "origin", branch)
+    return _sanitize_completed(git(repo, "push", "origin", branch))
 
 
 def ensure_clean_repo(repo: Path) -> None:
@@ -296,6 +351,9 @@ def cmd_impl(args) -> int:
     tests_cmd = extract_tests_command(plan_text)
     if not tests_cmd:
         fatal("plan.md has empty ## tests section")
+    err = validate_tests_command(tests_cmd)
+    if err:
+        fatal(err)
 
     ensure_clean_repo(target_repo)
     persona = read_persona("implementer")
@@ -446,6 +504,23 @@ def _ensure_on_head_branch(repo: Path, expected_branch: str) -> None:
 
 def _comments_path(task_slug: str) -> Path:
     return state.task_dir(task_slug) / "comments.json"
+
+
+def _count_unresolved_non_auto(s: dict) -> int:
+    """§13.6 #3 — count CodeRabbit comments that are neither auto-applicable
+    nor resolved. These are the items that genuinely need a human eye; if any
+    remain, auto-merge must not proceed."""
+    path = s["phases"].get("review-fetch", {}).get("comments_path")
+    if not path or not Path(path).exists():
+        return 0
+    try:
+        comments = _json.loads(Path(path).read_text())
+    except Exception:
+        return 0
+    return sum(
+        1 for c in comments
+        if not c.get("is_resolved") and not c.get("auto_applicable")
+    )
 
 
 def _extract_head_branch_from_pr(pr: dict) -> str:
@@ -670,13 +745,22 @@ def build_apply_prompt(persona: str, comment: dict, target_repo: Path) -> str:
         f"AI agent prompt (CodeRabbit):\n{comment['ai_prompt']}\n\n"
         if comment.get("ai_prompt") else ""
     )
+    ls, le = comment.get("line_start"), comment.get("line_end")
+    if ls is not None and le is not None and ls != le:
+        lines_line = f"Lines: {ls}-{le}\n"
+    elif ls is not None:
+        lines_line = f"Line: {ls}\n"
+    elif le is not None:
+        lines_line = f"Line: {le}\n"
+    else:
+        lines_line = ""
     return (
         f"{persona}\n\n"
         "---\n\n"
         "# Task — apply one CodeRabbit review comment\n\n"
         f"Target repo: {target_repo.resolve()}\n"
         f"File: {comment['path']}\n"
-        f"Lines: {comment['line_start']}-{comment['line_end']}\n"
+        f"{lines_line}"
         f"Severity: {comment['severity']}\n"
         f"Title: {comment['title']}\n\n"
         f"{diff_section}{ai_section}"
@@ -726,6 +810,7 @@ def _apply_one_comment(
             continue
 
         # Syntax check (Python only).
+        syntax_failed = False
         for f in touched:
             if f.endswith(".py"):
                 syntax = subprocess.run(
@@ -734,12 +819,53 @@ def _apply_one_comment(
                 )
                 if syntax.returncode != 0:
                     prev_failure = f"syntax check failed for {f}:\n{syntax.stderr}"
+                    syntax_failed = True
                     break
-        else:
-            return True, "ok"
-        continue
+        if syntax_failed:
+            continue
+
+        # Semantic validation (§13.6 #1). Optional per target-repo convention:
+        # prefer .harness/validate.sh; fall back to `pytest -q` when a
+        # pyproject.toml declares pytest; otherwise treat syntax-check as
+        # the only gate (logged explicitly so operators know the reduced
+        # assurance).
+        mode, validator_cmd = discover_validator(target_repo)
+        if validator_cmd is not None:
+            vp = subprocess.run(
+                validator_cmd, cwd=str(target_repo),
+                capture_output=True, text=True, timeout=600,
+            )
+            if vp.returncode != 0:
+                prev_failure = (
+                    f"semantic validation ({mode}) failed:\n"
+                    f"cmd: {' '.join(validator_cmd)}\n"
+                    f"--- stdout ---\n{vp.stdout[-2000:]}\n"
+                    f"--- stderr ---\n{vp.stderr[-2000:]}"
+                )
+                continue
+        return True, f"ok (validation={mode})"
 
     return False, prev_failure or "unknown failure"
+
+
+def discover_validator(repo: Path) -> tuple[str, list[str] | None]:
+    """Determine how to validate an autofix in `repo`.
+
+    Precedence:
+      (1) .harness/validate.sh — executable, caller-defined script
+      (2) pyproject.toml mentioning pytest — run `python3 -m pytest -q`
+      (3) none — syntax-only assurance
+
+    Returns: (mode, command). command is None when mode == "syntax-only".
+    """
+    harness_script = repo / ".harness" / "validate.sh"
+    if harness_script.is_file():
+        return "custom", ["bash", str(harness_script)]
+    pyproject = repo / "pyproject.toml"
+    if pyproject.is_file() and "pytest" in pyproject.read_text(errors="ignore"):
+        py = shutil.which("python3") or shutil.which("python") or "python3"
+        return "pytest", [py, "-m", "pytest", "-q", "--no-header"]
+    return "syntax-only", None
 
 
 def cmd_review_apply(args) -> int:
@@ -884,10 +1010,22 @@ def cmd_merge(args) -> int:
         reasons.append(f"skipped_comments={len(skipped)} (auto-merge gate §4.5)")
         mergeable = False
 
+    # §13.6 #3 — explicit unresolved non-auto-applicable count.
+    # reviewDecision is an indirect proxy; this is the direct measurement.
+    unresolved_non_auto = _count_unresolved_non_auto(s)
+    if unresolved_non_auto > 0:
+        reasons.append(
+            f"unresolved_non_auto={unresolved_non_auto} "
+            "(Major/Critical CodeRabbit comments still open — human review required)"
+        )
+        mergeable = False
+
     Path(attempt["log_path"]).write_text(
         f"merge gate for {base_repo}#{pr_number}\n"
         f"mergeable: {mergeable}\n"
         f"reasons: {reasons}\n"
+        f"unresolved_non_auto: {unresolved_non_auto}\n"
+        f"skipped: {len(skipped)}\n"
         f"dry_run: {args.dry_run}\n"
     )
 
