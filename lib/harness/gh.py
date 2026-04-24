@@ -51,7 +51,7 @@ def _gh_json(*args: str, timeout: int = 60) -> object:
     try:
         return json.loads(out) if out.strip() else None
     except json.JSONDecodeError as e:
-        raise GhError(f"gh output is not JSON: {e}", exit_code=0, stderr=out[:500])
+        raise GhError(f"gh output is not JSON: {e}", exit_code=0, stderr=out[:500]) from e
 
 
 # ---- PR state ----
@@ -154,7 +154,7 @@ def list_review_thread_resolutions(base_repo: str, pr_number: int) -> list[Threa
     try:
         parsed = json.loads(out)
     except json.JSONDecodeError as e:
-        raise GhError(f"graphql output not JSON: {e}", exit_code=0, stderr=out[:500])
+        raise GhError(f"graphql output not JSON: {e}", exit_code=0, stderr=out[:500]) from e
 
     if "errors" in parsed:
         raise GhError(f"graphql errors: {parsed['errors']}", exit_code=0)
@@ -207,9 +207,10 @@ def merge_pr(
     if strategy not in ("squash", "merge", "rebase"):
         raise ValueError(f"unknown strategy: {strategy}")
     if dry_run:
-        # Just confirm merge is possible; don't mutate.
-        info = pr_view(base_repo, pr_number, fields="mergeable,mergeStateStatus,state")
-        return None if info.get("state") == "OPEN" else None  # intentionally None
+        # Confirm merge is evaluable; gating is the caller's concern. Return
+        # None either way — dry runs never produce a merge SHA.
+        pr_view(base_repo, pr_number, fields="mergeable,mergeStateStatus,state")
+        return None
     args = ["pr", "merge", str(pr_number), "--repo", base_repo, f"--{strategy}"]
     if commit_title:
         args += ["--subject", commit_title]

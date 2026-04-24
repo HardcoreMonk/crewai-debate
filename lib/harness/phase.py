@@ -94,7 +94,7 @@ def validate_plan_markdown(plan_text: str) -> str | None:
             return f"missing section: ## {req}"
     if not parse_plan_files(plan_text):
         return "## files section is empty (no bullets)"
-    out_of_scope = [l for l in parse_section(plan_text, "out-of-scope") if l.strip()]
+    out_of_scope = [line for line in parse_section(plan_text, "out-of-scope") if line.strip()]
     if not out_of_scope:
         return "## out-of-scope section is empty"
     return None
