@@ -92,7 +92,7 @@ The gate string enumerates exactly which condition failed. Crosswalk to DESIGN �
 
 If the gate blocks but you're confident, bypass with `gh pr merge <n> --squash` directly. Note the bypass in the PR conversation or a commit trailer.
 
-**Known limitation (§13.6 #10, open).** `review-wait` currently fails to complete on a PR where CodeRabbit finds zero actionable items — it posts `"No actionable comments were generated"` as an issue comment *without* a formal review object, which `classify_review_body` doesn't recognise. Until fixed, zero-finding PRs reach `review-wait timed out after 600s`; bypass with `gh pr merge` the same way.
+Zero-actionable PRs (CodeRabbit posts `"No actionable comments were generated"` as an issue comment without a formal review object) are now recognised by `review-wait` — synthetic `review_id=0, review_sha=""` records `actionable_count=0` and the phase completes (DESIGN §13.6 #10).
 
 ## Rotating commit author
 

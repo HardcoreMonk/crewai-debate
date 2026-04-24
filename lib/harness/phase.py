@@ -890,9 +890,11 @@ def cmd_review_wait(args) -> int:
                     newest_review = r
 
             # Also inspect issue comments — CodeRabbit delivers skip/fail markers
-            # there (not as a PR review) per MVP-D-PREVIEW §2.2. Checking only
-            # reviews would hang the poll loop for the full timeout on a
-            # skipped/failed review.
+            # there (not as a PR review) per MVP-D-PREVIEW §2.2, AND posts
+            # zero-actionable "No actionable comments were generated" as an
+            # issue comment without any formal review object (§13.6 #10).
+            # Checking only reviews would hang the poll loop for the full
+            # timeout on either case.
             issue_sig: coderabbit.ReviewSignal | None = None
             try:
                 issues = gh.list_issue_comments(base_repo, pr_number)
@@ -904,7 +906,7 @@ def cmd_review_wait(args) -> int:
                     continue
                 body = ic.get("body") or ""
                 sig = coderabbit.classify_review_body(body)
-                if sig.kind in ("skipped", "failed"):
+                if sig.kind in ("skipped", "failed", "complete"):
                     if issue_sig is None or (ic.get("created_at") or "") > (getattr(issue_sig, "submitted_at", "") or ""):
                         issue_sig = sig
                         issue_sig.submitted_at = ic.get("created_at")
@@ -942,6 +944,25 @@ def cmd_review_wait(args) -> int:
                     state.finish_attempt(s, "review-wait", exit_code=1, note=note)
                     state.set_phase_status(s, "review-wait", state.STATUS_FAILED)
                     fatal(note)
+
+            # Zero-actionable fallback (§13.6 #10): no formal review object
+            # but CodeRabbit posted "No actionable comments were generated"
+            # as an issue comment. Synthetic review_id=0, sha="" — review-fetch
+            # will see actionable_count=0 and short-circuit.
+            if issue_sig and issue_sig.kind == "complete":
+                actionable = int(issue_sig.actionable_count or 0)
+                state.set_review_metadata(
+                    s,
+                    review_id=0,
+                    review_sha="",
+                    actionable_count=actionable,
+                )
+                state.finish_attempt(s, "review-wait", exit_code=0,
+                                     note=f"actionable={actionable} (issue-comment)")
+                state.set_phase_status(s, "review-wait", state.STATUS_COMPLETED)
+                print(f"review-wait: OK — zero-actionable issue comment "
+                      f"actionable={actionable}")
+                return 0
 
             if time.monotonic() >= deadline:
                 break
