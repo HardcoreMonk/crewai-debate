@@ -3,7 +3,7 @@
 Two cooperating tracks in one repo:
 
 1. **Debate track** (`skills/crewai-debate/`, `skills/crew-master/`) — Discord-delivered Developer↔Reviewer debate on a coding topic. Personal dev workflow tool, optimized for Unreal Engine C++ plan review before writing code. Single-turn LLM persona switching.
-2. **Harness track** (`lib/harness/`, `crew/personas/{planner,implementer}.md`) — git-native multi-phase AI pipeline. MVP-A (`plan → impl → commit`) turns a one-line intent into a commit. MVP-D (`review-wait → fetch → apply → reply → merge`) auto-applies CodeRabbit review feedback and gates merge. External script orchestrates; each phase spawns a headless `claude --print` invocation.
+2. **Harness track** (`lib/harness/`, `crew/personas/{planner,implementer,adr-writer}.md`) — git-native multi-phase AI pipeline. MVP-A (`plan → impl → commit`) turns a one-line intent into a commit. MVP-B (`adr` / `pr-create`) adds ADR generation + PR opening. MVP-D (`review-wait → fetch → apply → reply → merge`) auto-applies CodeRabbit review feedback and gates merge. External script orchestrates; each phase spawns a headless `claude --print` invocation. First end-to-end self-dogfood landed 2026-04-25 as PR #3 — see DESIGN §13.8.
 
 See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-PREVIEW.md`](docs/harness/MVP-D-PREVIEW.md) for the harness side, and the sections below for the debate side.
 
@@ -17,14 +17,17 @@ See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-
 - `crew/personas/{critic,coder,ue-expert}.md` — persona system prompts loaded by each worker via an `AGENTS.md` / `CLAUDE.md` symlink under `~/.openclaw/workspace/crew/<role>/`.
 
 ### Harness track
-- `lib/harness/phase.py` — phase executor CLI. Subcommands: `plan`, `impl`, `commit`, `review-wait`, `review-fetch`, `review-apply`, `review-reply`, `merge`.
+- `lib/harness/phase.py` — phase executor CLI. Subcommands: `plan`, `impl`, `commit`, `adr`, `pr-create`, `review-wait`, `review-fetch`, `review-apply`, `review-reply`, `merge` (10 phases).
 - `lib/harness/state.py` — per-task JSON state machine (`state/harness/<slug>/state.json`).
 - `lib/harness/runner.py` — `claude --print` headless wrapper shared by all LLM-invoking phases.
+- `lib/harness/gc.py` — standalone CLI to prune old `state/harness/<slug>/` dirs under a retention policy. See `docs/adr/0001-harness-state-retention-policy.md`.
 - `lib/harness/checks.sh` — plan-boundary diff check + Python syntax verification.
 - `lib/harness/coderabbit.py` — CodeRabbit review parsing (walkthrough markers, severity × criticality, AI-agent prompt extraction).
-- `lib/harness/gh.py` — thin `gh` CLI wrapper (PR view, list reviews/comments, GraphQL review-thread resolution, post comment, merge). Token-leak-sanitized via `_sanitize_completed`.
-- `crew/personas/planner.md`, `crew/personas/implementer.md` — harness-specific persona system prompts.
+- `lib/harness/gh.py` — thin `gh` CLI wrapper (PR view, list reviews/comments, GraphQL review-thread resolution, post comment, merge). Token-leak-sanitized via `_sanitize_completed`. Merge-gate accepts `reviewDecision ∈ {null, "", APPROVED}` so self-managed repos without a review rule can merge (see DESIGN §13.6 #8).
+- `crew/personas/planner.md`, `crew/personas/implementer.md`, `crew/personas/adr-writer.md` — harness-specific persona system prompts.
 - `lib/harness/tests/mock_e2e.py` — mock E2E dry-run (gh + runner + push monkey-patched).
+- `lib/harness/tests/test_gc.py` — `gc.py` retention-policy unit tests (9 cases).
+- `lib/harness/tests/test_gh_gate.py` — `is_pr_mergeable` unit tests (10 cases covering §13.6 #8).
 - `lib/harness/fixtures/coderabbit/*.json` — reference CodeRabbit payloads for parser self-test.
 
 ## Harness — getting started
@@ -65,7 +68,9 @@ Autofix validation is per-target-repo:
 - `pyproject.toml` declaring pytest — `python3 -m pytest -q` is used
 - otherwise — Python syntax check only (logged as `syntax-only` mode)
 
-Merge gate blocks when (a) `mergeable != MERGEABLE` / `mergeStateStatus != CLEAN`, (b) CI checks are not SUCCESS/NEUTRAL, (c) the apply phase skipped any comment, or (d) CodeRabbit left unresolved **non-auto-applicable** comments (Major/Critical).
+Merge gate blocks when (a) `mergeable != MERGEABLE` / `mergeStateStatus != CLEAN`, (b) CI checks are not SUCCESS/NEUTRAL, (c) the apply phase skipped any comment, or (d) CodeRabbit left unresolved **non-auto-applicable** comments (Major/Critical). `reviewDecision` must be one of `{APPROVED, null, ""}` — the empty string covers repos without a branch-protection review rule.
+
+**State maintenance.** `state/harness/<slug>/` is never auto-pruned. Use `python3 lib/harness/gc.py` (dry-run default) to review what would be removed, then `--apply` to actually delete. In-progress tasks are preserved unconditionally; completed tasks are kept up to `--keep N` (default 20). See `docs/adr/0001-harness-state-retention-policy.md` for the policy.
 
 ## How it works
 
@@ -155,13 +160,21 @@ lib/
   crew-dispatch.sh         # debate worker CLI launcher + Discord poster
   harness/                 # harness track
     phase.py state.py runner.py coderabbit.py gh.py
+    gc.py                  # state/harness GC (2026-04-25, ADR-0001)
     checks.sh
     fixtures/coderabbit/   # parser self-test payloads
-    tests/mock_e2e.py      # network/LLM-free dry run
+    tests/
+      mock_e2e.py          # network/LLM-free dry run
+      test_gc.py           # gc.py unit tests
+      test_gh_gate.py      # merge-gate unit tests (§13.6 #8)
 docs/
+  adr/                     # Architecture Decision Records (2026-04-25)
+    README.md              # ADR convention + index
+    0001-harness-state-retention-policy.md
   harness/
-    DESIGN.md              # brainstorm → phase contracts → retrospectives
+    DESIGN.md              # brainstorm → phase contracts → retrospectives → as-built §14
     MVP-D-PREVIEW.md       # CodeRabbit research + phase split
+  RUNBOOK.md               # operational procedures (debate + harness + gc)
 state/                     # gitignored scratch (debate + harness/<slug>/)
 ```
 

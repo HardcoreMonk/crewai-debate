@@ -58,6 +58,8 @@ Skip/fail 케이스: `<!-- ... skip review by coderabbit.ai -->` 또는 `<!-- ..
 
 **Review complete 신호**: PR review 객체의 `body`가 `^\*\*Actionable comments posted:\s*\d+\*\*`로 시작. `state: "COMMENTED"` 또는 `APPROVED`.
 
+> ⚠️ **2026-04-25 관찰 (DESIGN §13.6 #10)**: CodeRabbit이 actionable 0건인 PR에 대해서는 *formal review 객체를 만들지 않고* `"No actionable comments were generated in the recent review. 🎉"` 라는 issue comment만 포스트. 위 `ACTIONABLE_RE` 패턴에 매치되지 않기 때문에 현재 `classify_review_body`는 이를 `complete`로 인식하지 못하며, `cmd_review_wait`가 600s 타임아웃까지 대기. Fix 대기 중. PR #6에서 first self-hosted harness-merge 시도 시 이 케이스로 실패.
+
 **Inline 코멘트 템플릿**:
 ```
 `<line-range>`: **<Title>**

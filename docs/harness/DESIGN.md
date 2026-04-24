@@ -262,6 +262,7 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 | 2026-04-25 | Full-chain dogfood 첫 완주 (PR #3 merged `646c131`) — 10 phase 중 9개 harness 실행, CodeRabbit 5-round 수렴(actionable 2→0), merge는 friction #8(`reviewDecision=""`)로 out-of-band. §13.8 부록 + §13.6 #7-1~#7-8 + #8 등재. |
 | 2026-04-25 | §13.6 **#8 해결** (PR #5 merged `046a089`) — `gh.is_pr_mergeable()`가 `reviewDecision=""`을 `None`과 동치로 허용. 10 tests (test_gh_gate.py). |
 | 2026-04-25 | §13.6 **#10 등재** (PR #6 검증 중 발견, 미해결) — CodeRabbit zero-actionable 케이스가 formal review 없이 issue comment로만 들어와 `cmd_review_wait`가 감지 실패. #8 fix만으로는 self-managed repo full-10-phase 머지가 여전히 막힘. PR #6 자체는 OOB 머지. |
+| 2026-04-25 | Docs currency pass #2 — §14.2 directory layout + §14.3 CLI (`gc.py` 추가) + §14.7 gate #3 (`""` 허용 반영) + README.md (gc/adr/test_gh_gate 반영) + RUNBOOK.md (gc 운영 절차 + #10 known limitation) + MVP-D-PREVIEW.md §2.2 (#10 note). |
 
 ---
 
@@ -509,13 +510,20 @@ crewai/
 │     ├─ phase.py                              # 모든 phase CLI 진입점
 │     ├─ state.py                              # per-task JSON state machine
 │     ├─ runner.py                             # claude --print headless 래퍼
+│     ├─ gc.py                                 # state/harness/<slug>/ GC CLI (2026-04-25, ADR-0001)
 │     ├─ checks.sh                             # py_compile + plan boundary
 │     ├─ coderabbit.py                         # review body + inline comment 파서
-│     ├─ gh.py                                 # gh CLI wrapper (sanitize-aware)
+│     ├─ gh.py                                 # gh CLI wrapper (sanitize-aware, #8 fix 반영)
 │     ├─ fixtures/coderabbit/*.json            # parser self-test payloads
-│     └─ tests/mock_e2e.py                     # network·LLM-free dry run
+│     └─ tests/
+│        ├─ mock_e2e.py                        # network·LLM-free dry run
+│        ├─ test_gc.py                         # gc.py 단위 테스트 (9 cases)
+│        └─ test_gh_gate.py                    # is_pr_mergeable 단위 테스트 (10 cases, §13.6 #8)
 ├─ docs/
-│  ├─ RUNBOOK.md                               # 운영 런북 (debate + harness)
+│  ├─ RUNBOOK.md                               # 운영 런북 (debate + harness + gc)
+│  ├─ adr/                                     # ADR 레포지토리 (2026-04-25, NNNN-slug.md)
+│  │  ├─ README.md                             # ADR 규약 + 인덱스
+│  │  └─ 0001-harness-state-retention-policy.md
 │  └─ harness/
 │     ├─ DESIGN.md                             # 본 문서
 │     └─ MVP-D-PREVIEW.md                      # CodeRabbit 포맷 리서치 + 개정 기록
@@ -539,6 +547,11 @@ python3 lib/harness/phase.py review-fetch <slug>
 python3 lib/harness/phase.py review-apply <slug>
 python3 lib/harness/phase.py review-reply <slug>
 python3 lib/harness/phase.py merge        <slug> [--dry-run]
+
+# maintenance CLI (standalone, not a phase)
+python3 lib/harness/gc.py                            # dry-run, 기본 retention
+python3 lib/harness/gc.py --keep 10 --apply          # 최신 10개 completed 유지, 삭제 실행
+python3 lib/harness/gc.py --root /path/to/harness    # 기본 state/harness 외 루트
 ```
 
 환경변수:
@@ -598,12 +611,12 @@ auto = (not is_resolved) and (
 )
 ```
 
-### 14.7 Merge gate (fresh-data 반영)
+### 14.7 Merge gate (fresh-data + #8 반영)
 
 다음 조건 **모두** 충족 시 merge 허용:
 1. `mergeable == MERGEABLE`
 2. `mergeStateStatus == CLEAN`
-3. `reviewDecision ∈ {APPROVED, null}`
+3. `reviewDecision ∈ {APPROVED, null, ""}` (PR #5 `046a089`에서 `""` 추가 — gh CLI가 리뷰 규칙 없는 repo에 대해 빈 문자열을 반환하기 때문. §13.6 #8)
 4. `statusCheckRollup` 모두 SUCCESS / NEUTRAL / SKIPPED
 5. `review-apply.skipped_comment_ids` 비어 있음
 6. `gh.fetch_live_review_summary().inline_unresolved_non_auto == 0` (live, not stale comments.json)
