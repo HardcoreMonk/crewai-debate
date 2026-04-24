@@ -288,6 +288,35 @@ def ensure_clean_repo(repo: Path) -> None:
         fatal(f"target repo not clean:\n{st}\nCommit or stash before running impl.")
 
 
+_HARNESS_TRAILER = "Co-Authored-By: crewai-harness <harness-mvp@local>"
+
+
+def _annotate_with_harness_trailer(msg: str) -> str:
+    """Append a `Co-Authored-By: crewai-harness …` trailer so provenance is
+    preserved even when the author field belongs to the human running harness."""
+    if _HARNESS_TRAILER in msg:
+        return msg
+    # Git trailers must be separated from body by a blank line.
+    sep = "\n\n" if "\n" in msg.rstrip() else "\n\n"
+    return msg.rstrip() + sep + _HARNESS_TRAILER + "\n"
+
+
+def _git_commit_with_author(repo: Path, msg: str) -> subprocess.CompletedProcess:
+    """Commit with author resolution:
+      1. HARNESS_GIT_AUTHOR_{NAME,EMAIL} env vars override everything.
+      2. Otherwise the target repo's `user.name`/`user.email` config is used.
+      3. If neither is set, git itself will refuse — that's the right failure mode.
+    """
+    env_name = os.environ.get("HARNESS_GIT_AUTHOR_NAME")
+    env_email = os.environ.get("HARNESS_GIT_AUTHOR_EMAIL")
+    args: list[str] = []
+    if env_name:
+        args += ["-c", f"user.name={env_name}"]
+    if env_email:
+        args += ["-c", f"user.email={env_email}"]
+    return git(repo, *args, "commit", "-m", msg)
+
+
 # ---- phase drivers ----
 
 
@@ -432,7 +461,7 @@ def cmd_commit(args) -> int:
     files = parse_plan_files(plan_text)
     title = extract_commit_title(plan_text, args.task_slug)
     body = extract_commit_body(plan_text)
-    msg = f"{title}\n\n{body}".strip()
+    msg = _annotate_with_harness_trailer(f"{title}\n\n{body}".strip())
 
     attempt = state.start_attempt(s, "commit")
     # Use `git add -A -- <path>` so deletes/renames under a planned path
@@ -440,14 +469,7 @@ def cmd_commit(args) -> int:
     for f in files:
         git(target_repo, "add", "-A", "--", f)
 
-    author_name = os.environ.get("HARNESS_GIT_AUTHOR_NAME", "harness-mvp")
-    author_email = os.environ.get("HARNESS_GIT_AUTHOR_EMAIL", "harness@local")
-    commit_proc = git(
-        target_repo,
-        "-c", f"user.name={author_name}",
-        "-c", f"user.email={author_email}",
-        "commit", "-m", msg,
-    )
+    commit_proc = _git_commit_with_author(target_repo, msg)
     Path(attempt["log_path"]).write_text(
         f"git commit stdout:\n{commit_proc.stdout}\ngit commit stderr:\n{commit_proc.stderr}\n"
     )
@@ -897,15 +919,11 @@ def cmd_review_apply(args) -> int:
         if applied:
             # Commit this comment's change.
             git(target_repo, "add", comment["path"])
-            msg = f"autofix: {comment['title']}\n\nCodeRabbit comment #{comment['id']} ({comment['severity']})"
-            author_name = os.environ.get("HARNESS_GIT_AUTHOR_NAME", "harness-mvp")
-            author_email = os.environ.get("HARNESS_GIT_AUTHOR_EMAIL", "harness@local")
-            res = git(
-                target_repo,
-                "-c", f"user.name={author_name}",
-                "-c", f"user.email={author_email}",
-                "commit", "-m", msg,
+            msg = _annotate_with_harness_trailer(
+                f"autofix: {comment['title']}\n\n"
+                f"CodeRabbit comment #{comment['id']} ({comment['severity']})"
             )
+            res = _git_commit_with_author(target_repo, msg)
             if res.returncode != 0:
                 state.record_skipped_comment(s, comment["id"], f"commit failed: {res.stderr.strip()}")
                 summary_lines.append(f"  SKIP c#{comment['id']}: commit failed")

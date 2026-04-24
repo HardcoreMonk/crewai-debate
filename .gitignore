@@ -8,3 +8,5 @@ state/harness/
 .DS_Store
 crew/CHANNELS.local.md
 .playwright-mcp/
+# Claude Code per-clone session/settings — never committed
+.claude/
