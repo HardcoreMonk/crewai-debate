@@ -159,6 +159,47 @@ def test_malformed_state_is_skipped(harness_root, capsys):
         assert (harness_root / slug).is_dir()
 
 
+def test_negative_keep_is_rejected(harness_root, capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        gc_mod.main(["--root", str(harness_root), "--keep", "-1"])
+    # argparse exits 2 on type errors.
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "must be >= 0" in err
+
+
+def test_rmtree_failure_does_not_abort_sweep(harness_root, monkeypatch, capsys):
+    originals: dict[str, bool] = {}
+    target = harness_root / "done-old"
+
+    real_rmtree = gc_mod.shutil.rmtree
+
+    def flaky(path, *a, **kw):
+        if Path(path) == target:
+            originals["raised"] = True
+            raise OSError("simulated permission denied")
+        return real_rmtree(path, *a, **kw)
+
+    monkeypatch.setattr(gc_mod.shutil, "rmtree", flaky)
+
+    rc = gc_mod.main(["--root", str(harness_root), "--keep", "1", "--apply"])
+    assert rc == 0
+    assert originals.get("raised") is True
+
+    # done-old (the one we made fail) still present; done-mid (the other prune
+    # candidate under --keep 1) was pruned successfully.
+    assert (harness_root / "done-old").is_dir()
+    assert not (harness_root / "done-mid").exists()
+    # The newest completed and both in-progress are retained as normal.
+    assert (harness_root / "done-new").is_dir()
+    assert (harness_root / "wip-running").is_dir()
+    assert (harness_root / "wip-pending").is_dir()
+
+    captured = capsys.readouterr()
+    assert "failed to remove" in captured.err
+    assert "1 failed" in captured.out
+
+
 def test_keep_zero_retains_only_in_progress(harness_root, capsys):
     rc = gc_mod.main(
         ["--root", str(harness_root), "--keep", "0", "--apply"]

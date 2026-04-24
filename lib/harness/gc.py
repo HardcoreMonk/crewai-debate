@@ -21,6 +21,18 @@ _NON_TERMINAL_STATUSES = {"running", "pending"}
 _TERMINAL_CURRENT_PHASES = {"pr-create", "merge"}
 
 
+def _non_negative_int(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: {raw!r}")
+    if value < 0:
+        raise argparse.ArgumentTypeError(
+            f"--keep must be >= 0 (negative values are reserved to avoid destructive slice semantics); got {value}"
+        )
+    return value
+
+
 def _classify(state_obj: dict[str, Any]) -> str:
     phases = state_obj.get("phases") or {}
     for ph in phases.values():
@@ -60,8 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--root", default="state/harness",
                    help="state root dir (default: state/harness)")
-    p.add_argument("--keep", type=int, default=20,
-                   help="number of completed tasks to retain (default: 20)")
+    p.add_argument("--keep", type=_non_negative_int, default=20,
+                   help="number of completed tasks to retain (default: 20; must be >= 0)")
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", dest="dry_run", action="store_true", default=True,
                       help="preview without deleting (default)")
@@ -99,11 +111,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     pruned = 0
+    failed = 0
     for path, _cls, _updated_at in prune_entries:
-        shutil.rmtree(path)
+        try:
+            shutil.rmtree(path)
+        except OSError as exc:
+            print(f"gc: warning: failed to remove {path}: {exc}", file=sys.stderr)
+            failed += 1
+            continue
         print(f"removed {path}")
         pruned += 1
-    print(f"pruned {pruned} dirs, kept {len(keep_entries)} dirs")
+    summary = f"pruned {pruned} dirs, kept {len(keep_entries)} dirs"
+    if failed:
+        summary += f", {failed} failed (see warnings)"
+    print(summary)
     return 0
 
 
