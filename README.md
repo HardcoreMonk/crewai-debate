@@ -33,6 +33,7 @@ See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-
 - `lib/harness/tests/test_adr_commit_message.py` — `_build_adr_commit_message` unit tests (9 cases covering §13.6 #7-4 `adr --auto-commit` subject composition: ADR-prefix strip, width preservation, harness trailer).
 - `lib/harness/tests/test_plan_info_hygiene.py` — plan-info hygiene unit tests (17 cases covering §13.6 #7-6 HTML-comment strip, extraction-site integration for commit/PR/ADR, and §13.6 #7-5 `validate_plan_consistency` cross-check including unicode-ellipsis placeholder regression).
 - `lib/harness/tests/test_adr_width.py` — `_next_adr_number` width-resolution unit tests (11 cases covering §13.6 #7-1 `--adr-width` override + existing-convention authority; underscore-separator filename + max+1 vs count+1).
+- `lib/harness/tests/test_coderabbit_rate_limit.py` — `is_rate_limit_marker` unit tests (12 cases covering §13.6 #7-8 phrasing variants + false-positive defence against unrelated `rate`/`limit` words and other CodeRabbit markers).
 - `lib/harness/fixtures/coderabbit/*.json` — reference CodeRabbit payloads for parser self-test.
 
 ## Harness — getting started
@@ -179,6 +180,7 @@ lib/
       test_adr_commit_message.py          # adr --auto-commit subject tests (§13.6 #7-4)
       test_plan_info_hygiene.py           # HTML-comment strip + plan linter (§13.6 #7-2/#7-5/#7-6)
       test_adr_width.py                   # _next_adr_number override / detection (§13.6 #7-1)
+      test_coderabbit_rate_limit.py       # is_rate_limit_marker tests (§13.6 #7-8)
 docs/
   adr/                     # Architecture Decision Records (2026-04-25)
     README.md              # ADR convention + index

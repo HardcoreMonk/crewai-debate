@@ -22,6 +22,11 @@ NO_ACTIONABLE_RE = re.compile(r"No actionable comments were generated")
 SKIP_MARKER_RE = re.compile(r"<!--\s*[^>]*skip review by coderabbit\.ai[^>]*-->", re.IGNORECASE)
 FAIL_MARKER_RE = re.compile(r"<!--\s*[^>]*failure by coderabbit\.ai[^>]*-->", re.IGNORECASE)
 WALKTHROUGH_START = re.compile(r"<!--\s*walkthrough_start\s*-->", re.IGNORECASE)
+# Rate-limit detection (§13.6 #7-8). CodeRabbit's free-plan rapid-push
+# throttle posts an issue comment containing language like
+# "rate limit hit" / "rate-limited" / "Please try again". Permissive match
+# on the canonical noun phrase so light copy changes don't break the gate.
+RATE_LIMIT_RE = re.compile(r"\brate[\s-]*limit(?:ed)?\b", re.IGNORECASE)
 
 # Resolution tracking — CodeRabbit edits prior comments with this marker after an autofix.
 RESOLVED_RE = re.compile(r"✅\s*Addressed in commit\s+([0-9a-f]{7,40})", re.IGNORECASE)
@@ -151,6 +156,24 @@ def classify_review_object(review: dict[str, Any]) -> ReviewSignal:
     sig.submitted_at = review.get("submitted_at")
     sig.commit_sha = review.get("commit_id")
     return sig
+
+
+def is_rate_limit_marker(body: str) -> bool:
+    """Detect a CodeRabbit rate-limit notification in an issue comment body.
+
+    On free-plan repos a rapid push (≤ 1 hour) gets throttled and CodeRabbit
+    posts an issue comment instead of a formal review. Without this gate
+    `cmd_review_wait` would burn its 600s deadline polling for a review
+    that won't arrive until the limit clears (~1 hour). See DESIGN §13.6 #7-8.
+
+    Pattern is intentionally permissive — light copy changes from CodeRabbit
+    shouldn't silently turn this off. The caller still classifies the
+    comment via `classify_review_body` for skip/fail/complete kinds; this
+    is an *additional* signal, not a replacement.
+    """
+    if not body:
+        return False
+    return bool(RATE_LIMIT_RE.search(body))
 
 
 # ---- inline comment parsing ----
