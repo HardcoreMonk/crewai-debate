@@ -12,3 +12,4 @@
 ## Index
 
 <!-- ADR-001부터 시간순으로 추가. -->
+- [ADR-0001: Harness state retention policy](0001-harness-state-retention-policy.md)
