@@ -312,7 +312,13 @@ def is_pr_mergeable(pr: dict) -> tuple[bool, list[str]]:
     """Return (mergeable, reasons). Mergeable iff all hard gates pass.
 
     Hard gates: mergeable == MERGEABLE, mergeStateStatus == CLEAN,
-    reviewDecision in {APPROVED, None}, no failing required checks.
+    reviewDecision unset-or-APPROVED, no failing required checks.
+
+    "Unset" covers both ``None`` (GraphQL JSON null) and ``""`` (what the gh
+    CLI returns for repos with no branch-protection review rule). Treating
+    them identically is required for self-managed single-maintainer repos,
+    where no approver exists to flip the field to APPROVED — see DESIGN
+    §13.6 #8.
     """
     reasons: list[str] = []
     if pr.get("mergeable") != "MERGEABLE":
@@ -320,7 +326,7 @@ def is_pr_mergeable(pr: dict) -> tuple[bool, list[str]]:
     if pr.get("mergeStateStatus") not in ("CLEAN",):
         reasons.append(f"mergeStateStatus={pr.get('mergeStateStatus')!r}")
     rd = pr.get("reviewDecision")
-    if rd not in (None, "APPROVED"):
+    if rd not in (None, "", "APPROVED"):
         reasons.append(f"reviewDecision={rd!r}")
     rollup = pr.get("statusCheckRollup") or []
     for check in rollup:
