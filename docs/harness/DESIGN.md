@@ -251,7 +251,7 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 
 | 예정 | 실제 | 변동 |
 |------|------|------|
-| `lib/harness/phase.<sh|py>` | `lib/harness/phase.py` | Python 확정 |
+| `lib/harness/phase.<sh\|py>` | `lib/harness/phase.py` | Python 확정 |
 | `lib/harness/checks.sh` | `lib/harness/checks.sh` | 동일 |
 | `crew/personas/{planner,implementer}.md` | 동일 | 21/19줄 (16줄 규격 근사, 페르소나별 harness 계약 강제 문구 때문에 초과) |
 | `state/harness/<task>/{state.json, plan.md, logs/}` | 동일 | 동일 |
