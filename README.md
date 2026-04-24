@@ -38,10 +38,13 @@ python3 lib/harness/phase.py plan add-feature-X \
 
 python3 lib/harness/phase.py impl      add-feature-X
 python3 lib/harness/phase.py commit    add-feature-X
+python3 lib/harness/phase.py adr       add-feature-X          # optional: generate ADR file
 python3 lib/harness/phase.py pr-create add-feature-X          # optional: push + open PR
 ```
 
 The `pr-create` phase is the bridge from MVP-A to MVP-D: after it finishes it prints the exact `review-wait` command to run next, so `intent → merged PR` works as a single chain when CodeRabbit is installed on the target repo.
+
+The `adr` phase is standalone and optional: if the target repo has a `docs/adr/` (or `adr/`, `docs/adrs/`) directory, it writes a new numbered ADR derived from `plan.md` using the `adr-writer` persona. It does **not** auto-commit — the operator reviews and commits the ADR themselves so it lands in the intended repo/branch.
 
 **MVP-D pipeline** — auto-apply CodeRabbit feedback on an existing PR:
 

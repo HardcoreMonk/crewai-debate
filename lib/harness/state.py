@@ -20,7 +20,10 @@ from typing import Any
 
 PHASES_IMPLEMENT: list[str] = ["plan", "impl", "commit", "pr-create"]
 PHASES_REVIEW: list[str] = ["review-wait", "review-fetch", "review-apply", "review-reply", "merge"]
-ALL_PHASES: list[str] = PHASES_IMPLEMENT + PHASES_REVIEW
+# `adr` is an optional standalone phase — not part of any required chain but
+# allowed to appear in any implement-task's state.json via ensure_phase_slot.
+PHASES_OPTIONAL: list[str] = ["adr"]
+ALL_PHASES: list[str] = PHASES_IMPLEMENT + PHASES_OPTIONAL + PHASES_REVIEW
 
 # Back-compat alias: MVP-A code references PHASES.
 PHASES = PHASES_IMPLEMENT

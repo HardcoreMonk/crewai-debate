@@ -29,12 +29,12 @@ PERSONAS_DIR = CREWAI_ROOT / "crew" / "personas"
 CHECKS_SCRIPT = _HERE / "checks.sh"
 
 PHASE_TIMEOUTS = {
-    "plan": 120, "impl": 600, "commit": 30,
+    "plan": 120, "impl": 600, "commit": 30, "adr": 180, "pr-create": 60,
     "review-wait": 600, "review-fetch": 60, "review-apply": 1800,
     "review-reply": 30, "merge": 120,
 }
 PHASE_MAX_ATTEMPTS = {
-    "plan": 2, "impl": 3, "commit": 1,
+    "plan": 2, "impl": 3, "commit": 1, "adr": 2, "pr-create": 1,
     "review-wait": 1, "review-fetch": 2, "review-apply": 1,
     "review-reply": 2, "merge": 1,
 }
@@ -509,6 +509,132 @@ def cmd_commit(args) -> int:
     print(f"commit: OK — {sha}")
     print(f"title: {title}")
     return 0
+
+
+# ---- adr (optional, standalone; produces file only, non-auto-commit) ----
+
+
+_ADR_DIR_CANDIDATES = ("docs/adr", "adr", "docs/adrs")
+_ADR_FILENAME_RE = re.compile(r"^(\d+)[-_].+\.md$")
+
+
+def _find_adr_dir(target_repo: Path) -> Path | None:
+    for rel in _ADR_DIR_CANDIDATES:
+        d = target_repo / rel
+        if d.is_dir():
+            return d
+    return None
+
+
+def _next_adr_number(adr_dir: Path) -> tuple[int, int]:
+    """Return (next_number, digit_width) inferred from existing filenames.
+    Default to (1, 4) when the directory is empty or unrecognised."""
+    nums: list[tuple[int, int]] = []
+    for f in adr_dir.iterdir():
+        m = _ADR_FILENAME_RE.match(f.name)
+        if m:
+            nums.append((int(m.group(1)), len(m.group(1))))
+    if not nums:
+        return 1, 4
+    last_num, width = max(nums)
+    return last_num + 1, width
+
+
+def _build_adr_prompt(
+    persona: str, plan_text: str, adr_num_str: str, task_slug: str, intent: str,
+) -> str:
+    return (
+        f"{persona}\n\n"
+        "---\n\n"
+        "# Task\n\n"
+        f"ADR number: `{adr_num_str}` (preserve width verbatim in the H1).\n"
+        f"Task slug: `{task_slug}`\n"
+        f"Intent: {intent}\n\n"
+        "Approved plan:\n\n"
+        "```markdown\n"
+        f"{plan_text}\n"
+        "```\n\n"
+        "Emit ONLY the ADR content, starting with the H1. No triple backticks around the whole document."
+    )
+
+
+def _adr_filename_slug(adr_body: str) -> str:
+    heading = adr_body.split("\n", 1)[0].lstrip("# ").strip()
+    # Strip `ADR-<num>:` prefix if present
+    without_prefix = re.sub(r"^ADR[-_ ]?\d+\s*:\s*", "", heading, flags=re.IGNORECASE)
+    slug = re.sub(r"[^\w\s-]", "", without_prefix.lower())
+    slug = re.sub(r"[\s_]+", "-", slug).strip("-")
+    return slug[:60] or "untitled"
+
+
+def cmd_adr(args) -> int:
+    s = state.load_state(args.task_slug)
+    if s.get("task_type") != state.TASK_TYPE_IMPLEMENT:
+        fatal(f"adr is only for implement tasks (task_type={s.get('task_type')!r})")
+    if s["phases"]["plan"]["status"] != state.STATUS_COMPLETED:
+        fatal("plan phase not completed — adr needs plan.md as input")
+    state.ensure_phase_slot(s, "adr")
+    if s["phases"]["adr"]["status"] == state.STATUS_COMPLETED:
+        fatal("adr already completed for this task")
+
+    target_repo = Path(s["target_repo"])
+    adr_dir = _find_adr_dir(target_repo)
+    if adr_dir is None:
+        fatal(
+            "target repo has no docs/adr/ (or adr/, docs/adrs/) directory. "
+            "Create one first — ADR directory layout is a project-level decision "
+            "the harness will not make for you."
+        )
+
+    next_num, width = _next_adr_number(adr_dir)
+    num_str = f"{next_num:0{width}d}"
+    plan_path = Path(s["phases"]["plan"]["final_output_path"])
+    plan_text = plan_path.read_text()
+
+    persona = read_persona("adr-writer")
+    prompt = _build_adr_prompt(persona, plan_text, num_str, args.task_slug, s["intent"])
+
+    attempt = state.start_attempt(s, "adr")
+    for attempt_no in range(PHASE_MAX_ATTEMPTS["adr"]):
+        if attempt_no > 0:
+            attempt = state.start_attempt(s, "adr")
+        res = runner.run_claude(
+            prompt=prompt,
+            cwd=target_repo,
+            log_path=Path(attempt["log_path"]),
+            timeout_sec=PHASE_TIMEOUTS["adr"],
+        )
+        if res.partial:
+            note = f"claude exit={res.exit_code} timeout={res.timed_out}"
+            state.finish_attempt(s, "adr", exit_code=res.exit_code, note=note)
+            continue
+
+        adr_body = res.stdout.strip()
+        if not adr_body.startswith("# "):
+            state.finish_attempt(s, "adr", exit_code=1,
+                                 note="output missing H1 — not ADR-shaped")
+            continue
+        if f"ADR-{num_str}" not in adr_body.split("\n", 1)[0]:
+            state.finish_attempt(s, "adr", exit_code=1,
+                                 note=f"H1 missing ADR-{num_str} prefix")
+            continue
+
+        slug = _adr_filename_slug(adr_body)
+        adr_file = adr_dir / f"{num_str}-{slug}.md"
+        if adr_file.exists():
+            fatal(f"refuse overwrite: {adr_file} already exists")
+        adr_file.write_text(adr_body.rstrip() + "\n")
+
+        state.finish_attempt(s, "adr", exit_code=0, note=f"wrote {adr_file.name}")
+        state.set_phase_status(s, "adr", state.STATUS_COMPLETED,
+                               final_output_path=str(adr_file))
+        print(f"adr: OK → {adr_file}")
+        print("Review the file, then commit it yourself — `adr` does NOT auto-commit.")
+        return 0
+
+    state.set_phase_status(s, "adr", state.STATUS_FAILED)
+    fatal(f"adr: failed after {PHASE_MAX_ATTEMPTS['adr']} attempt(s)")
+    return 1  # unreachable
 
 
 # ---- pr-create (bridges MVP-A commit → MVP-D review-wait) ----
@@ -1232,7 +1358,8 @@ def cmd_merge(args) -> int:
 
 
 PHASE_CMDS = {
-    "plan": cmd_plan, "impl": cmd_impl, "commit": cmd_commit, "pr-create": cmd_pr_create,
+    "plan": cmd_plan, "impl": cmd_impl, "commit": cmd_commit,
+    "adr": cmd_adr, "pr-create": cmd_pr_create,
     "review-wait": cmd_review_wait, "review-fetch": cmd_review_fetch,
     "review-apply": cmd_review_apply, "review-reply": cmd_review_reply,
     "merge": cmd_merge,

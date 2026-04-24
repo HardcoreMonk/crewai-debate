@@ -60,6 +60,11 @@ cmd_boundary() {
   [ -n "$planned" ] || die "plan.md has no files section (or empty)" 2
 
   # Actual changes: working-tree diff + staged + untracked (not gitignored).
+  # Note: `git diff --name-only` reports paths for ALL statuses — added,
+  # modified, and deleted — so planned deletions are present here and will
+  # be checked against the plan like any other change. (Renames appear as
+  # the new name by default; if a plan needs to cover the old name too it
+  # must list both paths explicitly.)
   local changed staged untracked actual
   changed=$(git -C "$repo" diff --name-only 2>/dev/null || true)
   staged=$(git -C "$repo" diff --name-only --cached 2>/dev/null || true)

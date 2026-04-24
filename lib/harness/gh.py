@@ -159,14 +159,26 @@ def list_review_thread_resolutions(base_repo: str, pr_number: int) -> list[Threa
     if "errors" in parsed:
         raise GhError(f"graphql errors: {parsed['errors']}", exit_code=0)
 
-    threads = (
+    threads_obj = (
         parsed.get("data", {})
               .get("repository", {})
               .get("pullRequest", {})
               .get("reviewThreads", {})
-              .get("nodes", []) or []
     )
-    # Note: pagination not handled; 100 threads per PR is plenty for MVP.
+    threads = threads_obj.get("nodes", []) or []
+    # Pagination cap. The GraphQL query asks for first:100 threads; if a PR
+    # exceeds that, later threads silently drop off. This is unlikely but not
+    # impossible on long-running harness PRs. Log a warning to stderr when
+    # we're clearly near the cap so the operator can notice before the gate
+    # undercounts unresolved threads.
+    page_info = threads_obj.get("pageInfo", {}) or {}
+    if len(threads) >= 100 or page_info.get("hasNextPage"):
+        import sys as _sys
+        _sys.stderr.write(
+            f"warning: gh.list_review_thread_resolutions truncated at {len(threads)} threads "
+            f"(hasNextPage={page_info.get('hasNextPage')}); pagination not yet implemented — "
+            "merge gate may undercount unresolved non-auto comments.\n"
+        )
     out_list: list[ThreadResolution] = []
     for t in threads:
         nodes = t.get("comments", {}).get("nodes") or []

@@ -249,6 +249,7 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 | 2026-04-25 | Post-merge 폴리싱 wave 1 (commit `1681de2`, `93e6835`, `264fbc1`) — S1 author trailer, S2 planner H1 convention, S4 nitpicks (4/9 반영), S5 `.claude/` gitignore, S3 sandbox failure scenarios. |
 | 2026-04-25 | Post-merge 폴리싱 wave 2 (commit `7e1869e`) — §13.6 #5 fresh-data gate, §13.6 #6 MVP-B `pr-create` phase. |
 | 2026-04-25 | V1 pr-create live validation PASS + `validate_tests_command` shlex/quote-aware refactor (commit `6ce8454`). PR #2 created by harness, auto-closed (test-only). 자세한 내용 §13.7. |
+| 2026-04-25 | §13.6 #3b MVP-B `adr` phase 구현 + skipped nitpick 2건 polish (pagination cap 경고 / boundary delete 주석 명시). |
 
 ---
 
@@ -354,6 +355,7 @@ PR#1 적용 결과: 18 → 6 eligible (전부 Minor, 전부 docs/markdown/lint).
 - **#1 autofix 의미적 검증** — ✅ **구현** (`f811840`). `discover_validator()`가 `.harness/validate.sh` (convention) → `pyproject.toml` pytest → `syntax-only` 순으로 선택. `_apply_one_comment` 내부에서 syntax 검사 이후, 커밋 이전에 실행. 실패 시 해당 코멘트 skip.
 - **#2 재리뷰 루프 N=2 실전 검증** — ✅ **유도 검증 완료**. PR#1이 자연스럽게 4 라운드 수렴 (actionable 18→3→2→1). `bump_round()` 호출 없이 각 커밋 push로 CodeRabbit 재리뷰가 트리거됐고 feedback이 단조 감소. `bump_round()`는 명시적 재시작(예: round 실패 후 재도전) 용도로 유지 — 자연스러운 append-commit 재리뷰에는 불필요.
 - **#3 머지 게이트 non-auto 미해결 카운트** — ✅ **구현** (`f811840`). `_count_unresolved_non_auto()`가 `comments.json`에서 `!is_resolved && !auto_applicable`를 세어 게이트에 명시적 변수로 추가. `reviewDecision` 간접 프록시에 의존하지 않음.
+- **#3b MVP-B `adr` phase (신규)** — ✅ **구현**. 타겟 리포의 `docs/adr/` (또는 `adr/`/`docs/adrs/`) 자동 탐지 + 파일명 번호 width 감지(3자리/4자리). plan.md를 input으로 `adr-writer` persona가 4 섹션(Context/Decision/Consequences/Alternatives considered) ADR 생성. **파일만 생성, 자동 커밋 안 함** — 프로젝트별 컨벤션(같은 PR에 포함 vs 별도 PR)은 사람 결정. fork-session 패턴은 headless subprocess로 대체 (메인 세션 오염 없음).
 - **#4 CodeRabbit 외 리뷰봇 대응** — ⏸ **연기**. 현재 대상 리뷰봇 없음. 필요 시점에 author 화이트리스트 확장 + severity 매핑 테이블 추상화.
 - **#5 머지 게이트 fresh-data (신규)** — ✅ **구현** (post-merge 폴리싱). `gh.fetch_live_review_summary()`가 매 merge 시점에 inline comments + GraphQL 스레드 해제 상태를 재조회해 `inline_unresolved_non_auto` live 값을 산출. `cmd_merge`는 live 값을 게이트에 사용하고, stale `_count_unresolved_non_auto`는 감사/디버깅용으로 로그에만 병기. live fetch 실패 시 stale로 fallback (보수적 차단).
   - 동기: live-smoke-0 merge 시점에 게이트가 round-1 comments.json(12)을 봐서 차단됐는데 실제 live는 non-auto=2였음 — 그래도 0 아니라 manual merge 정당화됐지만, fresh 숫자가 **진실**을 보여주는 게 운영 편의에 필수.
