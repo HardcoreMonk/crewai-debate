@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -108,28 +109,50 @@ def extract_tests_command(plan_text: str) -> str:
     return normalize_tests_command(body.strip())
 
 
-# Forbidden shell metacharacters per planner persona contract — reject before
-# subprocess.run(shell=True). Defence-in-depth against planner hallucination:
-# even when the persona says "one command only", validate here too.
-_TESTS_CMD_FORBIDDEN = (
-    (r";", "command separator `;`"),
-    (r"&&", "chain `&&`"),
-    (r"\|\|", "chain `||`"),
-    (r"\$\(", "command substitution `$(...)`"),
-    (r"`", "backtick substitution"),
-    (r">>?[^\s]", "redirection"),
-    (r"\n", "newline (multi-line block)"),
-)
+# Operators that must not appear as top-level shell tokens. Tokens inside
+# quoted strings (e.g. `python3 -c "a; b"`) are passed as literal arguments
+# and are not shell operators, so shlex-based tokenization is essential to
+# avoid false positives on the interior of -c / -e payloads.
+_FORBIDDEN_TOKENS = frozenset({";", "&&", "||", "|", "&", ">", ">>", "<", "<<", "$(", "`"})
+
+
+_OPERATOR_CHARS = (";", "|", "&", "<", ">", "`")
 
 
 def validate_tests_command(cmd: str) -> str | None:
-    """Return error string if `cmd` contains forbidden shell metacharacters,
-    else None. Used before subprocess.run(shell=True) on planner output."""
+    """Reject plans whose `## tests` line is not a single non-interactive
+    shell command. Uses shlex with posix=False so quote state is preserved
+    in the raw tokens; operator chars are only dangerous in UNQUOTED tokens.
+
+    Allowed: `python3 -m pytest -q`, `bash scripts/ci.sh`, `python3 -c "a;b"`
+             (a `;` literal inside a quoted -c payload is harmless under shell=True).
+    Rejected: `cd x && pytest`, `pytest; echo done`, `ls;rm`, `cmd $(sub)`,
+              `cmd > file`, multi-line blocks.
+    """
     if not cmd:
         return "tests command is empty"
-    for pat, label in _TESTS_CMD_FORBIDDEN:
-        if re.search(pat, cmd):
-            return f"tests command rejected: {label} present in {cmd!r}"
+    if "\n" in cmd:
+        return "tests command rejected: newline (multi-line block)"
+    try:
+        raw_tokens = shlex.split(cmd, posix=False, comments=False)
+    except ValueError as e:
+        return f"tests command rejected: unparseable shell ({e})"
+    if not raw_tokens:
+        return "tests command rejected: empty after tokenization"
+
+    def _is_quoted(tok: str) -> bool:
+        return len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in ("'", '"')
+
+    for t in raw_tokens:
+        if _is_quoted(t):
+            # Whole-token quoted string — interior chars are literal under shell.
+            continue
+        if t in _FORBIDDEN_TOKENS:
+            return f"tests command rejected: shell operator token {t!r}"
+        if "$(" in t or "`" in t:
+            return f"tests command rejected: command substitution in token {t!r}"
+        if any(ch in t for ch in _OPERATOR_CHARS):
+            return f"tests command rejected: shell operator in unquoted token {t!r}"
     return None
 
 
