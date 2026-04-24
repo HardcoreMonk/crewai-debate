@@ -242,6 +242,9 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 |------|------|
 | 2026-04-24 | 초안. 브레인스토밍 전 과정 요약 동결. |
 | 2026-04-25 | MVP-A 구현 완료 + harness-sandbox golden-01-greet E2E PASS (commit `9243bb3`). §12 부록 추가. |
+| 2026-04-25 | MVP-D 구현 완료 + mocked E2E PASS (commit `d69e38a`). |
+| 2026-04-25 | MVP-D live smoke on PR#1 완주 — 5 phase 전원 실행, 머지 게이트 의도적 차단. §13 부록 추가. |
+| 2026-04-25 | CodeRabbit 10 finding fix (commit `0fd04a0`) — 1 false positive 기록, 1 design-level deferred. |
 
 ---
 
@@ -280,3 +283,71 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 - **Failure 로깅 정책** — state.json `attempts[].log_path`만으로 재진입 가능성 검증 (§10-6)
 - **MVP-D preview** — `gh pr view --comments`, CodeRabbit 파싱 (§10-7)
 - **sandbox failure 시나리오 추가** — 현재 golden-01만 있음. 의도적 경계 이탈, 테스트 실패, 타임아웃 각 1케이스
+
+---
+
+## 13. 구현 회고 — MVP-D 부록 (live smoke 기반)
+
+### 13.1 첫 live smoke 결과 (PR#1, 2026-04-25)
+
+대상: `HardcoreMonk/crewai-debate` PR#1 (harness MVP-A/D self-host 검증).
+
+| phase | 결과 | 비고 |
+|-------|------|------|
+| review-wait | ✓ (11 polls ≈ 7.5분) | CodeRabbit actionable=18 |
+| review-fetch | ✓ | 18 comments; revised filter → 6 eligible |
+| review-apply | ✓ **6/6 적용** | Minor 6건 전부 cleanly applied + pushed |
+| review-reply | ✓ | PR 코멘트 `#4314675141` 포스팅 |
+| merge --dry-run | **✓ 의도적 BLOCK** | `mergeStateStatus=UNSTABLE`, `reviewDecision=''` |
+
+머지 게이트 차단은 **설계대로**: Major/Critical 12건 미해결 + CI 재실행 중이므로 자동 머지 금지.
+
+### 13.2 CodeRabbit 실제 포맷 (§2 preview와 차이)
+
+MVP-D-PREVIEW에서 primary-source로 수집한 포맷과 live 포맷이 달랐음:
+
+| 항목 | preview 기준 | 실제 |
+|------|-------------|------|
+| 헤더 | `` `<range>`: **<Title>** `` | `_⚠️ Type_ | _🔴 Criticality_` + `**Title.**` 별도 라인 |
+| 심각도 | type(Nitpick/Potential/...) 단일 축 | **type × criticality** 2축 |
+| type 분포 (PR#1) | 다양하리라 예상 | **18/18이 `Potential issue`** (type 축 과포화) |
+| criticality 분포 | N/A | Critical 3 / Major 9 / Minor 6 |
+| 진짜 심각도 신호 | type | **criticality** |
+
+### 13.3 Auto-apply 필터 재설계
+
+초기(§9.1): `Nitpick/Suggested tweak/Refactor suggestion` type만 적용 → **live에선 18/18 제외**(모두 Potential issue)라 MVP-D 무용.
+
+개정: `type ∈ SAFE_TYPES ∪ criticality == Minor` (`coderabbit.py::is_auto_applicable`). Potential issue라도 Minor면 적용. Major/Critical은 type 무관 제외.
+
+PR#1 적용 결과: 18 → 6 eligible (전부 Minor, 전부 docs/markdown/lint). 위험도는 낮고 가치는 분명.
+
+### 13.4 CodeRabbit 리뷰 정확도 (PR#1 기준)
+
+12 Major/Critical 검증:
+
+| 분류 | 수 | 구성 |
+|------|-----|------|
+| **실제 버그/개선점** | 10 | fix 커밋 `0fd04a0`에 반영 |
+| **false positive** | 1 | c#3138919566 — `comments_path` state 경로 주장이 코드와 다름. live-smoke가 이미 성공한 것이 반증. |
+| **deferred (design-level)** | 1 | c#3138919572 — autofix의 의미적 검증. repo별 test cmd 발견 기구 필요. MVP-D v2 대상. |
+
+교훈: **CodeRabbit 피드백은 92% 정확하지만 맹신 금지**. 자동 반영 전 최소 spot-check 필요. 현재 MVP-D는 Minor만 자동 적용하므로 false positive 피해 범위는 제한적.
+
+### 13.5 live 대응으로 추가된 인프라
+
+| 요소 | 파일 | 이유 |
+|------|------|------|
+| `push_branch_via_gh_token` | phase.py | `.gitconfig` 없는 환경에서 config mutation 없이 push |
+| `list_issue_comments` 폴링 | phase.py::cmd_review_wait | skip/fail 마커가 PR review 아닌 issue comment로 옴 |
+| `_validate_slug` | state.py | `task_slug`의 path injection 방지 |
+| TimeoutExpired → GhError | gh.py::_gh | caller가 GhError만 catch해도 timeout 처리 가능 |
+| criticality 축 | coderabbit.py | 실제 format 반영, 필터 정확도↑ |
+| push 선결 → phase complete | phase.py::cmd_review_apply | 원격 drift 방지 (§4.5 게이트 보호) |
+
+### 13.6 MVP-D v2 후속 작업
+
+- **autofix 의미적 검증**: repo별 `test.sh` 컨벤션 또는 `pyproject.toml`/`package.json` 감지 → 커밋 전 실행 (c#3138919572)
+- **재리뷰 루프 N=2 실전 검증**: 이번 0fd04a0 푸시가 round 2. CodeRabbit이 새 피드백 주면 동일 파이프라인 재돌림
+- **머지 게이트의 non-auto 미해결 카운트**: 현재 게이트는 `reviewDecision != APPROVED`로 간접 차단. 명시적 "unresolved non-autofixable" 카운트 노출이 더 선명
+- **CodeRabbit 외 리뷰봇 대응 대비**: 어휘 일반화 시점 미정

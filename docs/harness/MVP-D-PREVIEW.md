@@ -287,3 +287,50 @@ After applying, run the repo's test command (<TEST_CMD>) and report the last 20 
 | 일자 | 내용 |
 |------|------|
 | 2026-04-25 (초안 작성일) | 초안. gh CLI 표면 참조 + CodeRabbit 포맷 primary source 참조 + phase 분할 4안 + persona 재사용 전략. |
+| 2026-04-25 (live 검증) | PR#1 smoke 후 §11 부록 추가. 2.2 포맷·필터 정책 개정은 DESIGN.md §13으로 정리. |
+
+---
+
+## 11. Live smoke 업데이트 (PR#1, 2026-04-25)
+
+이 문서의 초안 포맷 가정과 실제 CodeRabbit 출력 사이의 주요 차이를 짧게 기록.
+구현 반영의 전체 회고는 `DESIGN.md §13` 참조.
+
+### 11.1 포맷 차이 — 두 가지 핵심
+
+1. **헤더 2축 (Type | Criticality)**
+   - 초안 가정: `_⚠️ Potential issue_` 단일 축.
+   - 실제: `_⚠️ Type_ | _🔴 Criticality_` 2축. Criticality는 `🔴 Critical / 🟠 Major / 🟡 Minor`.
+   - 함의: type 축이 포화(18/18이 `Potential issue`)될 수 있어 **criticality가 진짜 심각도 신호**.
+
+2. **타이틀 위치**
+   - 초안 가정: `` `<range>`: **<Title>** `` (backtick range 접두어).
+   - 실제: 심각도 라인 후 **별도 라인의 `**Title.**`**. path/line은 이미 GitHub API 필드에 있음.
+
+### 11.2 Auto-apply 필터 정책 개정
+
+§1·§4.3 기준 "`Potential issue` 제외"만으론 PR#1에서 **18/18 제외** → MVP-D 무용.
+
+개정 정책:
+- 자동 적용 = `type ∈ {nitpick, suggested_tweak, refactor_suggestion}` **또는** `criticality == minor`
+- 위 조건 미충족 = human 검토 (skipped로 이관)
+- 머지 게이트 유지: skipped > 0 이면 자동 머지 금지
+
+코드 구현: `lib/harness/coderabbit.py::is_auto_applicable()`.
+
+### 11.3 리뷰 정확도 결과
+
+12 Major/Critical 코멘트 중:
+- 10개 실제 버그/개선 — commit `0fd04a0`으로 반영
+- 1개 false positive (c#3138919566, `comments_path` state 경로 오독)
+- 1개 deferred (c#3138919572, autofix 의미적 검증은 design-level)
+
+**CodeRabbit은 매우 정확하지만 맹신 금지**. 자동 반영 대상을 Minor 한정으로 유지하는 현 정책은 false positive 피해 반경을 제한.
+
+### 11.4 운영 기판 추가
+
+live 대응에서 추가된 요소 (DESIGN.md §13.5 참조):
+- `push_branch_via_gh_token` — `.gitconfig` 없는 환경 대응
+- `cmd_review_wait` 내부에 `list_issue_comments` 폴링 (skip/fail 마커 short-circuit)
+- `_validate_slug` — path injection 방지
+- gh.py의 `TimeoutExpired → GhError` 변환
