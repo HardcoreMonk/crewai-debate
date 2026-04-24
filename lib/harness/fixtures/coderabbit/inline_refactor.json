@@ -1,0 +1,10 @@
+{
+  "id": 1234567003,
+  "user": {"login": "coderabbitai[bot]", "type": "Bot", "id": 136622811},
+  "path": "lib/harness/runner.py",
+  "start_line": 60,
+  "line": 80,
+  "commit_id": "abc123def456abc123def456abc123def456abcd",
+  "body": "`60-80`: _🛠️ Refactor suggestion_: **Extract metadata header into helper**\n\nThe `with log_path.open(...)` block mixes metadata writing and subprocess invocation. Splitting them clarifies intent.\n\n<details>\n<summary>🛠️ Refactor suggestion</summary>\n\n```diff\n-with log_path.open(\"w\") as logf:\n-    logf.write(f\"=== harness.runner.run_claude ===\\n\")\n-    logf.write(f\"cwd:     {cwd}\\n\")\n-    ...\n+def _write_log_header(logf, cwd, timeout_sec, prompt): ...\n+with log_path.open(\"w\") as logf:\n+    _write_log_header(logf, cwd, timeout_sec, prompt)\n```\n\n</details>\n\n<details>\n<summary>🤖 Prompt for AI Agents</summary>\n\n```\nIn lib/harness/runner.py around lines 60-80, extract the log-header writing into a private helper `_write_log_header(logf, cwd, timeout_sec, prompt)` and call it from `run_claude`. Keep behaviour identical; only the structure changes.\n```\n\n</details>\n",
+  "created_at": "2026-04-25T03:12:47Z"
+}

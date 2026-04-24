@@ -1,0 +1,10 @@
+{
+  "id": 1234567002,
+  "user": {"login": "coderabbitai[bot]", "type": "Bot", "id": 136622811},
+  "path": "lib/harness/phase.py",
+  "start_line": 215,
+  "line": 218,
+  "commit_id": "abc123def456abc123def456abc123def456abcd",
+  "body": "`215-218`: _⚠️ Potential issue_: **Shell-injection risk in tests command**\n\nThe `tests_cmd` is executed with `shell=True` using a value extracted from plan.md. A planner hallucinating a `;` or `$()` substitution would run arbitrary shell.\n\n<details>\n<summary>⚠️ Potential issue</summary>\n\n```diff\n-tests_proc = subprocess.run(\n-    tests_cmd, shell=True, cwd=str(target_repo),\n-    ...\n-)\n+args = shlex.split(tests_cmd)\n+tests_proc = subprocess.run(\n+    args, cwd=str(target_repo),\n+    ...\n+)\n```\n\n</details>\n\n<details>\n<summary>🤖 Prompt for AI Agents</summary>\n\n```\nIn lib/harness/phase.py around lines 215-218, remove `shell=True` from the subprocess.run that executes tests_cmd. Use shlex.split to tokenize the command; fall back to shell=True only when the tests section contains a multi-line bash block. Add a validation regex rejecting tests_cmd containing `;`, `&&`, `||`, or `$(` to be extra safe.\n```\n\n</details>\n",
+  "created_at": "2026-04-25T03:12:46Z"
+}

@@ -18,7 +18,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-PHASES: list[str] = ["plan", "impl", "commit"]
+PHASES_IMPLEMENT: list[str] = ["plan", "impl", "commit"]
+PHASES_REVIEW: list[str] = ["review-wait", "review-fetch", "review-apply", "review-reply", "merge"]
+ALL_PHASES: list[str] = PHASES_IMPLEMENT + PHASES_REVIEW
+
+# Back-compat alias: MVP-A code references PHASES.
+PHASES = PHASES_IMPLEMENT
+
+TASK_TYPE_IMPLEMENT = "implement"
+TASK_TYPE_REVIEW = "review"
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
@@ -50,7 +58,7 @@ def log_dir(task_slug: str) -> Path:
 
 
 def init_state(task_slug: str, intent: str, target_repo: str) -> dict[str, Any]:
-    """Create a fresh state.json for a new task. Fails if one already exists."""
+    """Create a fresh implement-task state.json. Fails if one already exists."""
     d = task_dir(task_slug)
     if state_path(task_slug).exists():
         raise FileExistsError(f"task already exists: {d}")
@@ -59,15 +67,73 @@ def init_state(task_slug: str, intent: str, target_repo: str) -> dict[str, Any]:
     now = _now()
     state = {
         "task_slug": task_slug,
+        "task_type": TASK_TYPE_IMPLEMENT,
         "intent": intent,
         "target_repo": str(Path(target_repo).resolve()),
         "created_at": now,
         "updated_at": now,
-        "current_phase": PHASES[0],
+        "current_phase": PHASES_IMPLEMENT[0],
         "commit_sha": None,
         "phases": {
             p: {"status": STATUS_PENDING, "attempts": [], "final_output_path": None}
-            for p in PHASES
+            for p in PHASES_IMPLEMENT
+        },
+    }
+    save_state(state)
+    return state
+
+
+def init_review_state(
+    task_slug: str,
+    *,
+    base_repo: str,
+    pr_number: int,
+    target_repo: str,
+) -> dict[str, Any]:
+    """Create a fresh review-task state.json (MVP-D).
+
+    base_repo: GitHub slug `owner/repo` (for `gh api` calls).
+    pr_number: PR to operate on.
+    target_repo: local clone where autofix commits will be made.
+    """
+    d = task_dir(task_slug)
+    if state_path(task_slug).exists():
+        raise FileExistsError(f"task already exists: {d}")
+    d.mkdir(parents=True, exist_ok=False)
+    log_dir(task_slug).mkdir(exist_ok=True)
+    now = _now()
+    state = {
+        "task_slug": task_slug,
+        "task_type": TASK_TYPE_REVIEW,
+        "base_repo": base_repo,
+        "pr_number": int(pr_number),
+        "target_repo": str(Path(target_repo).resolve()),
+        "head_branch": None,
+        "round": 1,
+        "created_at": now,
+        "updated_at": now,
+        "current_phase": PHASES_REVIEW[0],
+        "phases": {
+            "review-wait": {
+                "status": STATUS_PENDING, "attempts": [],
+                "review_id": None, "review_sha": None, "actionable_count": None,
+            },
+            "review-fetch": {
+                "status": STATUS_PENDING, "attempts": [],
+                "comments_path": None,
+            },
+            "review-apply": {
+                "status": STATUS_PENDING, "attempts": [],
+                "applied_commits": [], "skipped_comment_ids": [],
+            },
+            "review-reply": {
+                "status": STATUS_PENDING, "attempts": [],
+                "posted_comment_id": None,
+            },
+            "merge": {
+                "status": STATUS_PENDING, "attempts": [],
+                "merge_sha": None, "dry_run": False,
+            },
         },
     }
     save_state(state)
@@ -100,7 +166,7 @@ def save_state(state: dict[str, Any]) -> None:
 
 def start_attempt(state: dict[str, Any], phase: str) -> dict[str, Any]:
     """Mark phase running and append a new attempt record. Returns the attempt."""
-    if phase not in PHASES:
+    if phase not in ALL_PHASES:
         raise ValueError(f"unknown phase: {phase}")
     attempts = state["phases"][phase]["attempts"]
     attempt_idx = len(attempts)
@@ -151,3 +217,66 @@ def set_phase_status(
 def set_commit_sha(state: dict[str, Any], sha: str) -> None:
     state["commit_sha"] = sha
     save_state(state)
+
+
+# ---- review-task helpers (MVP-D) ----
+
+
+def set_review_metadata(
+    state: dict[str, Any],
+    *,
+    review_id: int,
+    review_sha: str,
+    actionable_count: int,
+) -> None:
+    state["phases"]["review-wait"]["review_id"] = review_id
+    state["phases"]["review-wait"]["review_sha"] = review_sha
+    state["phases"]["review-wait"]["actionable_count"] = actionable_count
+    save_state(state)
+
+
+def set_head_branch(state: dict[str, Any], branch: str) -> None:
+    state["head_branch"] = branch
+    save_state(state)
+
+
+def record_applied_commit(state: dict[str, Any], sha: str) -> None:
+    state["phases"]["review-apply"]["applied_commits"].append(sha)
+    save_state(state)
+
+
+def record_skipped_comment(
+    state: dict[str, Any],
+    comment_id: int,
+    reason: str,
+) -> None:
+    state["phases"]["review-apply"]["skipped_comment_ids"].append(
+        {"id": comment_id, "reason": reason}
+    )
+    save_state(state)
+
+
+def set_comments_path(state: dict[str, Any], path: str) -> None:
+    state["phases"]["review-fetch"]["comments_path"] = path
+    save_state(state)
+
+
+def set_posted_reply(state: dict[str, Any], comment_id: int) -> None:
+    state["phases"]["review-reply"]["posted_comment_id"] = comment_id
+    save_state(state)
+
+
+def set_merge_result(state: dict[str, Any], *, sha: str | None, dry_run: bool) -> None:
+    state["phases"]["merge"]["merge_sha"] = sha
+    state["phases"]["merge"]["dry_run"] = dry_run
+    save_state(state)
+
+
+def bump_round(state: dict[str, Any]) -> int:
+    state["round"] = state.get("round", 1) + 1
+    # Reset per-round phase slots for re-review loop
+    for phase in ("review-wait", "review-fetch", "review-apply", "review-reply"):
+        state["phases"][phase]["status"] = STATUS_PENDING
+        state["phases"][phase]["attempts"] = []
+    save_state(state)
+    return state["round"]

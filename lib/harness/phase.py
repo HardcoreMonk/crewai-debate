@@ -27,8 +27,20 @@ CREWAI_ROOT = _HERE.parents[1]
 PERSONAS_DIR = CREWAI_ROOT / "crew" / "personas"
 CHECKS_SCRIPT = _HERE / "checks.sh"
 
-PHASE_TIMEOUTS = {"plan": 120, "impl": 600, "commit": 30}
-PHASE_MAX_ATTEMPTS = {"plan": 2, "impl": 3, "commit": 1}
+PHASE_TIMEOUTS = {
+    "plan": 120, "impl": 600, "commit": 30,
+    "review-wait": 600, "review-fetch": 60, "review-apply": 1800,
+    "review-reply": 30, "merge": 120,
+}
+PHASE_MAX_ATTEMPTS = {
+    "plan": 2, "impl": 3, "commit": 1,
+    "review-wait": 1, "review-fetch": 2, "review-apply": 1,
+    "review-reply": 2, "merge": 1,
+}
+
+REVIEW_POLL_INTERVAL_SEC = 45
+REVIEW_MAX_ROUND = 2        # autofix re-review loop cap (§2 decision)
+APPLY_RETRY_PER_COMMENT = 2  # implementer self-fix cap on a single comment
 
 REQUIRED_PLAN_SECTIONS = ("files", "changes", "tests", "out-of-scope")
 
@@ -366,14 +378,497 @@ def cmd_commit(args) -> int:
     return 0
 
 
+# ==================== MVP-D phases ====================
+
+
+import time  # noqa: E402
+import json as _json  # noqa: E402
+
+import coderabbit  # noqa: E402
+import gh         # noqa: E402
+
+
+def _load_review_state_or_die(task_slug: str) -> dict:
+    s = state.load_state(task_slug)
+    if s.get("task_type") != state.TASK_TYPE_REVIEW:
+        fatal(f"task {task_slug!r} is not a review task (task_type={s.get('task_type')!r})")
+    return s
+
+
+def _require_prev_phase_completed(s: dict, phase: str) -> None:
+    order = state.PHASES_REVIEW
+    idx = order.index(phase)
+    if idx == 0:
+        return
+    prev = order[idx - 1]
+    if s["phases"][prev]["status"] != state.STATUS_COMPLETED:
+        fatal(f"previous phase not completed: {prev} (status={s['phases'][prev]['status']})")
+
+
+def _ensure_on_head_branch(repo: Path, expected_branch: str) -> None:
+    actual = git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if actual != expected_branch:
+        fatal(
+            f"target repo {repo} is on branch {actual!r}; expected {expected_branch!r}. "
+            "Checkout the PR head branch before running apply/reply/merge."
+        )
+
+
+def _comments_path(task_slug: str) -> Path:
+    return state.task_dir(task_slug) / "comments.json"
+
+
+def _extract_head_branch_from_pr(pr: dict) -> str:
+    return pr.get("headRefName") or ""
+
+
+# ---- review-wait ----
+
+
+def cmd_review_wait(args) -> int:
+    # Init-if-absent
+    try:
+        s = state.load_state(args.task_slug)
+    except FileNotFoundError:
+        if not args.pr or not args.base_repo or not args.target_repo:
+            fatal("review-wait (first call) requires --pr, --base-repo, --target-repo")
+        s = state.init_review_state(
+            args.task_slug,
+            base_repo=args.base_repo,
+            pr_number=int(args.pr),
+            target_repo=args.target_repo,
+        )
+
+    if s["phases"]["review-wait"]["status"] == state.STATUS_COMPLETED:
+        fatal("review-wait already completed — advance to review-fetch")
+
+    attempt = state.start_attempt(s, "review-wait")
+    log = Path(attempt["log_path"])
+    log.parent.mkdir(parents=True, exist_ok=True)
+
+    base_repo = s["base_repo"]
+    pr_number = s["pr_number"]
+    deadline = time.monotonic() + PHASE_TIMEOUTS["review-wait"]
+
+    # Pre-flight: confirm PR is OPEN and capture head branch.
+    try:
+        pr = gh.pr_view(base_repo, pr_number)
+    except gh.GhError as e:
+        note = f"pr_view failed: {e} stderr={e.stderr}"
+        state.finish_attempt(s, "review-wait", exit_code=e.exit_code or 1, note=note)
+        state.set_phase_status(s, "review-wait", state.STATUS_FAILED)
+        fatal(note)
+
+    if pr.get("state") != "OPEN":
+        note = f"PR is {pr.get('state')!r}, not OPEN"
+        state.finish_attempt(s, "review-wait", exit_code=1, note=note)
+        state.set_phase_status(s, "review-wait", state.STATUS_FAILED)
+        fatal(note)
+
+    head = _extract_head_branch_from_pr(pr)
+    if head:
+        state.set_head_branch(s, head)
+
+    with log.open("w") as logf:
+        logf.write(f"review-wait: base={base_repo} pr={pr_number} head={head}\n")
+        poll_count = 0
+        while True:
+            poll_count += 1
+            now_iso = _json.dumps(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+            try:
+                reviews = gh.list_reviews(base_repo, pr_number)
+            except gh.GhError as e:
+                logf.write(f"poll {poll_count}: list_reviews failed: {e}\n")
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(REVIEW_POLL_INTERVAL_SEC)
+                continue
+
+            bot_reviews = [r for r in reviews if coderabbit.is_coderabbit_author(r.get("user"))]
+            newest_sig: coderabbit.ReviewSignal | None = None
+            newest_review: dict | None = None
+            for r in bot_reviews:
+                sig = coderabbit.classify_review_object(r)
+                if sig.kind == "none":
+                    continue
+                if newest_sig is None or (sig.submitted_at or "") > (newest_sig.submitted_at or ""):
+                    newest_sig = sig
+                    newest_review = r
+
+            logf.write(
+                f"poll {poll_count} at {now_iso}: reviews={len(reviews)} "
+                f"bot={len(bot_reviews)} kind={newest_sig.kind if newest_sig else None}\n"
+            )
+            logf.flush()
+
+            if newest_sig is not None:
+                if newest_sig.kind == "complete":
+                    state.set_review_metadata(
+                        s,
+                        review_id=int(newest_sig.review_id or 0),
+                        review_sha=str(newest_sig.commit_sha or ""),
+                        actionable_count=int(newest_sig.actionable_count or 0),
+                    )
+                    state.finish_attempt(s, "review-wait", exit_code=0,
+                                         note=f"actionable={newest_sig.actionable_count}")
+                    state.set_phase_status(s, "review-wait", state.STATUS_COMPLETED)
+                    print(f"review-wait: OK — review_id={newest_sig.review_id} "
+                          f"actionable={newest_sig.actionable_count}")
+                    return 0
+                if newest_sig.kind in ("skipped", "failed"):
+                    note = f"CodeRabbit review {newest_sig.kind}"
+                    state.finish_attempt(s, "review-wait", exit_code=1, note=note)
+                    state.set_phase_status(s, "review-wait", state.STATUS_FAILED)
+                    fatal(note)
+
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(REVIEW_POLL_INTERVAL_SEC)
+
+        note = f"timed out after {PHASE_TIMEOUTS['review-wait']}s ({poll_count} polls)"
+        state.finish_attempt(s, "review-wait", exit_code=124, note=note)
+        state.set_phase_status(s, "review-wait", state.STATUS_FAILED)
+        fatal(note)
+    return 1  # unreachable
+
+
+# ---- review-fetch ----
+
+
+def cmd_review_fetch(args) -> int:
+    s = _load_review_state_or_die(args.task_slug)
+    _require_prev_phase_completed(s, "review-fetch")
+    if s["phases"]["review-fetch"]["status"] == state.STATUS_COMPLETED:
+        fatal("review-fetch already completed")
+
+    attempt = state.start_attempt(s, "review-fetch")
+    base_repo = s["base_repo"]
+    pr_number = s["pr_number"]
+
+    try:
+        raw = gh.list_inline_comments(base_repo, pr_number)
+    except gh.GhError as e:
+        note = f"list_inline_comments failed: {e}"
+        state.finish_attempt(s, "review-fetch", exit_code=e.exit_code or 1, note=note)
+        state.set_phase_status(s, "review-fetch", state.STATUS_FAILED)
+        fatal(note)
+
+    bot_comments = coderabbit.filter_bot_comments(raw)
+
+    # GraphQL-based resolution (authoritative over body markers).
+    try:
+        thread_res = gh.list_review_thread_resolutions(base_repo, pr_number)
+    except gh.GhError as e:
+        # Non-fatal — fall back to body-based is_resolved detection.
+        Path(attempt["log_path"]).write_text(
+            f"warning: review_threads GraphQL failed, relying on body markers: {e}\n"
+        )
+        thread_res = []
+    resolved_ids = {tr.comment_id for tr in thread_res if tr.is_resolved}
+
+    parsed = []
+    for raw_c in bot_comments:
+        ic = coderabbit.parse_inline_comment(raw_c)
+        is_res = ic.is_resolved or (ic.id in resolved_ids)
+        parsed.append({
+            "id": ic.id,
+            "path": ic.path,
+            "line_start": ic.line_start,
+            "line_end": ic.line_end,
+            "title": ic.title,
+            "severity": ic.severity,
+            "ai_prompt": ic.ai_prompt,
+            "diff_block": ic.diff_block,
+            "raw_body": ic.raw_body,
+            "is_resolved": is_res,
+            "auto_applicable": (not is_res) and (ic.severity in coderabbit.SEVERITIES_AUTO_APPLY),
+            "created_at": ic.created_at,
+        })
+
+    comments_path = _comments_path(args.task_slug)
+    comments_path.write_text(_json.dumps(parsed, indent=2, ensure_ascii=False))
+    state.set_comments_path(s, str(comments_path))
+    state.finish_attempt(s, "review-fetch", exit_code=0,
+                         note=f"{len(parsed)} comment(s), {sum(c['auto_applicable'] for c in parsed)} auto-applicable")
+    state.set_phase_status(s, "review-fetch", state.STATUS_COMPLETED)
+    print(f"review-fetch: OK — {len(parsed)} comment(s) → {comments_path}")
+    return 0
+
+
+# ---- review-apply ----
+
+
+def build_apply_prompt(persona: str, comment: dict, target_repo: Path) -> str:
+    diff_section = (
+        f"Suggested diff:\n```diff\n{comment['diff_block']}\n```\n\n"
+        if comment.get("diff_block") else ""
+    )
+    ai_section = (
+        f"AI agent prompt (CodeRabbit):\n{comment['ai_prompt']}\n\n"
+        if comment.get("ai_prompt") else ""
+    )
+    return (
+        f"{persona}\n\n"
+        "---\n\n"
+        "# Task — apply one CodeRabbit review comment\n\n"
+        f"Target repo: {target_repo.resolve()}\n"
+        f"File: {comment['path']}\n"
+        f"Lines: {comment['line_start']}-{comment['line_end']}\n"
+        f"Severity: {comment['severity']}\n"
+        f"Title: {comment['title']}\n\n"
+        f"{diff_section}{ai_section}"
+        f"Edit ONLY {comment['path']}. "
+        "Do not touch any other file. Do not run git commands."
+    )
+
+
+def _apply_one_comment(
+    s: dict,
+    comment: dict,
+    target_repo: Path,
+    attempt_log: Path,
+) -> tuple[bool, str]:
+    """Returns (applied, reason). On success, caller should commit."""
+    persona = read_persona("implementer")
+    prompt = build_apply_prompt(persona, comment, target_repo)
+    prev_failure: str | None = None
+
+    for retry in range(APPLY_RETRY_PER_COMMENT + 1):
+        # Ensure clean slate before each retry of this comment.
+        if retry > 0:
+            reset_target_repo(target_repo)
+        sub_log = attempt_log.parent / f"{attempt_log.stem}-c{comment['id']}-r{retry}.log"
+        res = runner.run_claude(
+            prompt=(prompt if not prev_failure
+                    else prompt + f"\n\n---\n\n# Previous attempt failed\n\n```\n{prev_failure[-4000:]}\n```\n"),
+            cwd=target_repo,
+            log_path=sub_log,
+            timeout_sec=PHASE_TIMEOUTS["review-apply"] // (APPLY_RETRY_PER_COMMENT + 1),
+        )
+        if res.partial:
+            prev_failure = f"claude exit={res.exit_code} timeout={res.timed_out}\n{res.stdout[-2000:]}"
+            continue
+
+        # Boundary: diff must be confined to the comment path.
+        changed = git(target_repo, "diff", "--name-only").stdout.strip().splitlines()
+        untracked = git(target_repo, "ls-files", "--others", "--exclude-standard").stdout.strip().splitlines()
+        touched = sorted(set(changed + untracked))
+        allowed = {comment["path"]}
+        violations = [p for p in touched if p and p not in allowed]
+        if violations:
+            prev_failure = f"boundary violation — changed {violations}, expected only {list(allowed)}"
+            continue
+        if not touched:
+            prev_failure = "no changes applied"
+            continue
+
+        # Syntax check (Python only).
+        for f in touched:
+            if f.endswith(".py"):
+                syntax = subprocess.run(
+                    ["bash", str(CHECKS_SCRIPT), "syntax", str(target_repo / f)],
+                    capture_output=True, text=True,
+                )
+                if syntax.returncode != 0:
+                    prev_failure = f"syntax check failed for {f}:\n{syntax.stderr}"
+                    break
+        else:
+            return True, "ok"
+        continue
+
+    return False, prev_failure or "unknown failure"
+
+
+def cmd_review_apply(args) -> int:
+    s = _load_review_state_or_die(args.task_slug)
+    _require_prev_phase_completed(s, "review-apply")
+    if s["phases"]["review-apply"]["status"] == state.STATUS_COMPLETED:
+        fatal("review-apply already completed")
+
+    comments_path = Path(s["phases"]["review-fetch"]["comments_path"])
+    if not comments_path.exists():
+        fatal(f"comments file missing: {comments_path}")
+    comments = _json.loads(comments_path.read_text())
+
+    to_apply = [c for c in comments if c["auto_applicable"]]
+    target_repo = Path(s["target_repo"])
+    ensure_clean_repo(target_repo)
+    if s.get("head_branch"):
+        _ensure_on_head_branch(target_repo, s["head_branch"])
+
+    attempt = state.start_attempt(s, "review-apply")
+    attempt_log = Path(attempt["log_path"])
+    attempt_log.parent.mkdir(parents=True, exist_ok=True)
+    summary_lines: list[str] = [
+        f"review-apply task={args.task_slug} comments_total={len(comments)} to_apply={len(to_apply)}"
+    ]
+
+    for comment in to_apply:
+        applied, reason = _apply_one_comment(s, comment, target_repo, attempt_log)
+        if applied:
+            # Commit this comment's change.
+            git(target_repo, "add", comment["path"])
+            msg = f"autofix: {comment['title']}\n\nCodeRabbit comment #{comment['id']} ({comment['severity']})"
+            author_name = os.environ.get("HARNESS_GIT_AUTHOR_NAME", "harness-mvp")
+            author_email = os.environ.get("HARNESS_GIT_AUTHOR_EMAIL", "harness@local")
+            res = git(
+                target_repo,
+                "-c", f"user.name={author_name}",
+                "-c", f"user.email={author_email}",
+                "commit", "-m", msg,
+            )
+            if res.returncode != 0:
+                state.record_skipped_comment(s, comment["id"], f"commit failed: {res.stderr.strip()}")
+                summary_lines.append(f"  SKIP c#{comment['id']}: commit failed")
+                reset_target_repo(target_repo)
+                continue
+            sha = git(target_repo, "rev-parse", "HEAD").stdout.strip()
+            state.record_applied_commit(s, sha)
+            summary_lines.append(f"  OK   c#{comment['id']}: {sha[:12]} {comment['title']}")
+        else:
+            state.record_skipped_comment(s, comment["id"], reason)
+            summary_lines.append(f"  SKIP c#{comment['id']}: {reason}")
+            reset_target_repo(target_repo)
+
+    attempt_log.write_text("\n".join(summary_lines) + "\n")
+    state.finish_attempt(s, "review-apply", exit_code=0,
+                         note=f"applied={len(s['phases']['review-apply']['applied_commits'])} "
+                              f"skipped={len(s['phases']['review-apply']['skipped_comment_ids'])}")
+    state.set_phase_status(s, "review-apply", state.STATUS_COMPLETED)
+
+    # Push autofix commits so CodeRabbit can re-review.
+    if s["phases"]["review-apply"]["applied_commits"]:
+        push = git(target_repo, "push", "origin", s["head_branch"])
+        if push.returncode != 0:
+            print(f"warning: push failed — {push.stderr.strip()}", file=sys.stderr)
+
+    for line in summary_lines:
+        print(line)
+    return 0
+
+
+# ---- review-reply ----
+
+
+def cmd_review_reply(args) -> int:
+    s = _load_review_state_or_die(args.task_slug)
+    _require_prev_phase_completed(s, "review-reply")
+    if s["phases"]["review-reply"]["status"] == state.STATUS_COMPLETED:
+        fatal("review-reply already completed")
+
+    applied = s["phases"]["review-apply"]["applied_commits"]
+    skipped = s["phases"]["review-apply"]["skipped_comment_ids"]
+    applied_lines = [f"- `{sha[:12]}`" for sha in applied] or ["- (none)"]
+    skipped_lines = [f"- c#{item['id']}: {item['reason']}" for item in skipped] or ["- (none)"]
+    body = (
+        "🤖 Harness auto-reply (MVP-D)\n\n"
+        f"**Applied ({len(applied)} autofix commit(s))**\n"
+        + "\n".join(applied_lines) + "\n\n"
+        f"**Skipped ({len(skipped)} comment(s))**\n"
+        + "\n".join(skipped_lines) + "\n"
+    )
+
+    attempt = state.start_attempt(s, "review-reply")
+    try:
+        posted = gh.post_pr_comment(s["base_repo"], s["pr_number"], body)
+    except gh.GhError as e:
+        note = f"post_pr_comment failed: {e}"
+        state.finish_attempt(s, "review-reply", exit_code=e.exit_code or 1, note=note)
+        state.set_phase_status(s, "review-reply", state.STATUS_FAILED)
+        fatal(note)
+
+    state.set_posted_reply(s, int(posted.get("id", 0)))
+    state.finish_attempt(s, "review-reply", exit_code=0, note=f"comment_id={posted.get('id')}")
+    state.set_phase_status(s, "review-reply", state.STATUS_COMPLETED)
+    print(f"review-reply: OK — posted comment {posted.get('id')} ({posted.get('html_url','')})")
+    return 0
+
+
+# ---- merge ----
+
+
+def cmd_merge(args) -> int:
+    s = _load_review_state_or_die(args.task_slug)
+    _require_prev_phase_completed(s, "merge")
+    if s["phases"]["merge"]["status"] == state.STATUS_COMPLETED:
+        fatal("merge already completed")
+
+    base_repo = s["base_repo"]
+    pr_number = s["pr_number"]
+
+    attempt = state.start_attempt(s, "merge")
+    try:
+        pr = gh.pr_view(base_repo, pr_number)
+    except gh.GhError as e:
+        state.finish_attempt(s, "merge", exit_code=e.exit_code or 1, note=str(e))
+        state.set_phase_status(s, "merge", state.STATUS_FAILED)
+        fatal(str(e))
+
+    mergeable, reasons = gh.is_pr_mergeable(pr)
+    skipped = s["phases"]["review-apply"]["skipped_comment_ids"]
+    if skipped:
+        reasons.append(f"skipped_comments={len(skipped)} (auto-merge gate §4.5)")
+        mergeable = False
+
+    Path(attempt["log_path"]).write_text(
+        f"merge gate for {base_repo}#{pr_number}\n"
+        f"mergeable: {mergeable}\n"
+        f"reasons: {reasons}\n"
+        f"dry_run: {args.dry_run}\n"
+    )
+
+    if not mergeable:
+        note = "gate failed: " + ", ".join(reasons)
+        state.finish_attempt(s, "merge", exit_code=1, note=note)
+        state.set_phase_status(s, "merge", state.STATUS_FAILED)
+        fatal(note)
+
+    if args.dry_run:
+        state.set_merge_result(s, sha=None, dry_run=True)
+        state.finish_attempt(s, "merge", exit_code=0, note="dry-run (gate passed)")
+        state.set_phase_status(s, "merge", state.STATUS_COMPLETED)
+        print("merge: DRY-RUN OK — gate passed, no merge performed")
+        return 0
+
+    try:
+        sha = gh.merge_pr(base_repo, pr_number, strategy="squash")
+    except gh.GhError as e:
+        state.finish_attempt(s, "merge", exit_code=e.exit_code or 1, note=str(e))
+        state.set_phase_status(s, "merge", state.STATUS_FAILED)
+        fatal(str(e))
+
+    state.set_merge_result(s, sha=sha, dry_run=False)
+    state.finish_attempt(s, "merge", exit_code=0, note=f"sha={sha}")
+    state.set_phase_status(s, "merge", state.STATUS_COMPLETED)
+    print(f"merge: OK — {sha}")
+    return 0
+
+
+# ---- CLI dispatcher ----
+
+
+PHASE_CMDS = {
+    "plan": cmd_plan, "impl": cmd_impl, "commit": cmd_commit,
+    "review-wait": cmd_review_wait, "review-fetch": cmd_review_fetch,
+    "review-apply": cmd_review_apply, "review-reply": cmd_review_reply,
+    "merge": cmd_merge,
+}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="harness-phase")
-    ap.add_argument("phase", choices=["plan", "impl", "commit"])
+    ap.add_argument("phase", choices=list(PHASE_CMDS.keys()))
     ap.add_argument("task_slug")
-    ap.add_argument("--intent", help="one-line intent (plan phase, first call)")
-    ap.add_argument("--target-repo", help="absolute path to target repo (plan phase, first call)")
+    # implement-task inits
+    ap.add_argument("--intent", help="one-line intent (plan, first call)")
+    ap.add_argument("--target-repo", help="absolute path to target repo (plan/review-wait, first call)")
+    # review-task inits
+    ap.add_argument("--pr", type=int, help="PR number (review-wait, first call)")
+    ap.add_argument("--base-repo", help="GitHub slug owner/repo (review-wait, first call)")
+    # merge
+    ap.add_argument("--dry-run", action="store_true", help="merge: evaluate gate, don't merge")
     args = ap.parse_args()
-    return {"plan": cmd_plan, "impl": cmd_impl, "commit": cmd_commit}[args.phase](args)
+    return PHASE_CMDS[args.phase](args)
 
 
 if __name__ == "__main__":

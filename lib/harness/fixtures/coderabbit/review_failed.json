@@ -1,0 +1,8 @@
+{
+  "id": 2987654324,
+  "user": {"login": "coderabbitai[bot]", "type": "Bot", "id": 136622811},
+  "body": "<!-- This is an auto-generated comment: failure by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review failed\n>\n> The review failed because the configuration provided was invalid.\n\n<!-- end of auto-generated comment: failure by coderabbit.ai -->\n",
+  "state": "COMMENTED",
+  "commit_id": "222bbb333ccc444ddd555eee666fff7778888999",
+  "submitted_at": "2026-04-25T03:06:00Z"
+}

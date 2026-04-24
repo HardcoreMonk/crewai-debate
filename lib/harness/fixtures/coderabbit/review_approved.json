@@ -1,0 +1,9 @@
+{
+  "id": 2987654322,
+  "user": {"login": "coderabbitai[bot]", "type": "Bot", "id": 136622811},
+  "body": "**Actionable comments posted: 0**\n\nAll previous suggestions have been addressed. LGTM.\n",
+  "state": "APPROVED",
+  "commit_id": "def456abc123def456abc123def456abc123defa",
+  "submitted_at": "2026-04-25T03:45:12Z",
+  "html_url": "https://github.com/HardcoreMonk/crewai-debate/pull/1#pullrequestreview-2987654322"
+}

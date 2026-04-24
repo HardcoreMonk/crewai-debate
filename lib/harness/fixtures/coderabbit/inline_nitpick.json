@@ -1,0 +1,10 @@
+{
+  "id": 1234567001,
+  "user": {"login": "coderabbitai[bot]", "type": "Bot", "id": 136622811},
+  "path": "lib/harness/state.py",
+  "start_line": 35,
+  "line": 37,
+  "commit_id": "abc123def456abc123def456abc123def456abcd",
+  "body": "`35-37`: **Rename shadowed variable `state`**\n\nThe parameter `state` shadows the module name `state` imported by callers; minor readability nit.\n\n<details>\n<summary>🧹 Nitpick (non-blocking)</summary>\n\n```diff\n-def save_state(state: dict[str, Any]) -> None:\n-    state[\"updated_at\"] = _now()\n+def save_state(st: dict[str, Any]) -> None:\n+    st[\"updated_at\"] = _now()\n```\n\n</details>\n\n<details>\n<summary>🤖 Prompt for AI Agents</summary>\n\n```\nIn lib/harness/state.py around lines 35-37, the local parameter `state` shadows the module name. Rename the parameter to `st` (or similar) and update the function body's references accordingly. Keep the public signature stable if any caller uses keyword args; otherwise a positional-only rename is fine.\n```\n\n</details>\n",
+  "created_at": "2026-04-25T03:12:45Z"
+}
