@@ -49,6 +49,22 @@ H2_RE = re.compile(r"^##\s+(.+?)\s*$")
 H1_RE = re.compile(r"^#\s+(.+?)\s*$")
 BULLET_RE = re.compile(r"^-\s+(.+)$")
 
+# §13.6 #7-6 — HTML comment blocks in plan.md are operator-only coordination
+# notes (e.g. "ALREADY CREATED … DO NOT regenerate"). They must not bleed
+# into public artifacts (commit body, PR body, ADR prompt). DOTALL so
+# multi-line blocks collapse cleanly.
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def _strip_html_comments(text: str) -> str:
+    """Remove HTML comment blocks from plan-derived text.
+
+    Used at every public-artifact composition site. Authors put internal
+    coordination text inside `<!-- ... -->`; this scrubs it before commit
+    messages, PR bodies, or ADR prompts go out. See DESIGN §13.6 #7-6.
+    """
+    return _HTML_COMMENT_RE.sub("", text)
+
 
 def fatal(msg: str) -> None:
     print(f"phase: {msg}", file=sys.stderr)
@@ -99,6 +115,67 @@ def validate_plan_markdown(plan_text: str) -> str | None:
     if not out_of_scope:
         return "## out-of-scope section is empty"
     return None
+
+
+# §13.6 #7-5 — file-path-shaped tokens we want to cross-check against
+# `## files` and the target repo. Two patterns: extension match (covers
+# bare filenames like `phase.py`) and directory match (covers paths with
+# at least one separator like `lib/harness/phase.py`). Best-effort — the
+# result drives a *warning*, never a hard fail, so false positives are
+# preferable to false negatives.
+_PATH_EXTS = (
+    "md", "py", "sh", "json", "yaml", "yml", "txt", "toml",
+    "tsx", "ts", "jsx", "js", "html", "css", "sql", "rst",
+    "cfg", "ini", "lock",
+)
+_PATH_EXT_RE = re.compile(
+    r"\S+?\.(?:" + "|".join(_PATH_EXTS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_path_candidates(text: str) -> set[str]:
+    """Pull path-shaped tokens from a chunk of plan-derived markdown.
+
+    Strips backtick wrappers and trailing punctuation. The returned set
+    is fed to `validate_plan_consistency` for cross-checking.
+    """
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    cands: set[str] = set()
+    for m in _PATH_EXT_RE.finditer(text):
+        tok = m.group(0).rstrip(".,;:)\"'")
+        if tok:
+            cands.add(tok)
+    return cands
+
+
+def validate_plan_consistency(plan_text: str, target_repo: Path) -> list[str]:
+    """Cross-check `## changes` and `## out-of-scope` for path-like tokens
+    that are neither declared in `## files` nor present on disk.
+
+    Returns a list of warning strings (empty = clean). Catches the
+    DESIGN §13.6 #7-5 failure mode where the planner emits a stale or
+    placeholder path (e.g. `001-…md`) that downstream phases reproduce
+    verbatim.
+
+    Lenient by design — operator can choose to fix the plan or proceed.
+    """
+    declared = {p.lstrip("./") for p in parse_plan_files(plan_text)}
+    plan_text = _strip_html_comments(plan_text)
+    warnings: list[str] = []
+    for section in ("changes", "out-of-scope"):
+        body = "\n".join(parse_section(plan_text, section))
+        for cand in sorted(_extract_path_candidates(body)):
+            normalized = cand.lstrip("./")
+            if normalized in declared:
+                continue
+            if (target_repo / normalized).exists():
+                continue
+            warnings.append(
+                f"## {section}: path-like token {cand!r} not in ## files "
+                f"and not present in target repo"
+            )
+    return warnings
 
 
 def extract_tests_command(plan_text: str) -> str:
@@ -175,6 +252,7 @@ def extract_commit_title(plan_text: str, task_slug: str) -> str:
 
 
 def extract_commit_body(plan_text: str) -> str:
+    plan_text = _strip_html_comments(plan_text)
     changes = []
     for line in parse_section(plan_text, "changes"):
         if BULLET_RE.match(line.strip()):
@@ -382,6 +460,11 @@ def cmd_plan(args) -> int:
         state.set_phase_status(
             s, "plan", state.STATUS_COMPLETED, final_output_path=str(plan_file)
         )
+        # Lenient cross-check — print warnings but never block the plan
+        # phase. Catches stale/placeholder paths the planner sometimes
+        # leaves in changes/out-of-scope (DESIGN §13.6 #7-5).
+        for w in validate_plan_consistency(plan_text, target_repo):
+            print(f"plan: warn — {w}", file=sys.stderr)
         print(f"plan: OK → {plan_file}")
         return 0
 
@@ -543,6 +626,10 @@ def _next_adr_number(adr_dir: Path) -> tuple[int, int]:
 def _build_adr_prompt(
     persona: str, plan_text: str, adr_num_str: str, task_slug: str, intent: str,
 ) -> str:
+    # Strip HTML coordination notes before the planner's text reaches the
+    # adr-writer — those are operator-only and must not leak into the ADR
+    # body (DESIGN §13.6 #7-6 + adr-writer's #7-2 verbatim-copy risk).
+    plan_text = _strip_html_comments(plan_text)
     return (
         f"{persona}\n\n"
         "---\n\n"
@@ -699,7 +786,9 @@ def _origin_base_repo(target_repo: Path) -> str:
 
 
 def _build_pr_body(plan_text: str, s: dict) -> str:
-    """Compose PR body from plan.md sections + harness provenance footer."""
+    """Compose PR body from plan.md sections + harness provenance footer.
+    HTML comment blocks are stripped — see DESIGN §13.6 #7-6."""
+    plan_text = _strip_html_comments(plan_text)
     changes_lines = [l for l in parse_section(plan_text, "changes") if l.strip()]
     scope_lines = [l for l in parse_section(plan_text, "out-of-scope") if l.strip()]
     tests_cmd = extract_tests_command(plan_text) or "(none)"

@@ -31,6 +31,7 @@ See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-
 - `lib/harness/tests/test_coderabbit_zero_actionable.py` — `classify_review_body` unit tests (7 cases covering §13.6 #10 zero-actionable detection + precedence).
 - `lib/harness/tests/test_state_review_watermark.py` — `seen_review_id_max` / `seen_issue_comment_id_max` watermark unit tests (11 cases covering §13.6 #7-7 cross-round staleness gate, monotone setter, `bump_round` preservation, legacy backward-compat).
 - `lib/harness/tests/test_adr_commit_message.py` — `_build_adr_commit_message` unit tests (9 cases covering §13.6 #7-4 `adr --auto-commit` subject composition: ADR-prefix strip, width preservation, harness trailer).
+- `lib/harness/tests/test_plan_info_hygiene.py` — plan-info hygiene unit tests (17 cases covering §13.6 #7-6 HTML-comment strip, extraction-site integration for commit/PR/ADR, and §13.6 #7-5 `validate_plan_consistency` cross-check including unicode-ellipsis placeholder regression).
 - `lib/harness/fixtures/coderabbit/*.json` — reference CodeRabbit payloads for parser self-test.
 
 ## Harness — getting started
@@ -174,6 +175,7 @@ lib/
       test_coderabbit_zero_actionable.py  # zero-actionable parser tests (§13.6 #10)
       test_state_review_watermark.py      # cross-round staleness watermark tests (§13.6 #7-7)
       test_adr_commit_message.py          # adr --auto-commit subject tests (§13.6 #7-4)
+      test_plan_info_hygiene.py           # HTML-comment strip + plan linter (§13.6 #7-2/#7-5/#7-6)
 docs/
   adr/                     # Architecture Decision Records (2026-04-25)
     README.md              # ADR convention + index
