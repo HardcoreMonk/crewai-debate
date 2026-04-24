@@ -5,6 +5,6 @@
   "start_line": 42,
   "line": 42,
   "commit_id": "abc123def456abc123def456abc123def456abcd",
-  "body": "✅ Addressed in commit deadbeefcafef00dba5eba11c0ffeec0de1234567\n\n---\n\n`42`: **Original comment (now resolved)**\n\n(Original CodeRabbit suggestion text preserved below for history.)\n\n<details>\n<summary>🧹 Nitpick</summary>\n\n```diff\n-die() { echo \"checks: $*\" >&2; exit \"${2:-1}\"; }\n+die() { printf 'checks: %s\\n' \"$*\" >&2; exit \"${2:-1}\"; }\n```\n\n</details>\n",
+  "body": "✅ Addressed in commit deadbeefcafef00dba5eba11c0ffeec0de123456\n\n---\n\n`42`: **Original comment (now resolved)**\n\n(Original CodeRabbit suggestion text preserved below for history.)\n\n<details>\n<summary>🧹 Nitpick</summary>\n\n```diff\n-die() { echo \"checks: $*\" >&2; exit \"${2:-1}\"; }\n+die() { printf 'checks: %s\\n' \"$*\" >&2; exit \"${2:-1}\"; }\n```\n\n</details>\n",
   "created_at": "2026-04-25T03:12:48Z"
 }
