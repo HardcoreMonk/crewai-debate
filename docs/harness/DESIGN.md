@@ -241,3 +241,42 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 | 일자 | 내용 |
 |------|------|
 | 2026-04-24 | 초안. 브레인스토밍 전 과정 요약 동결. |
+| 2026-04-25 | MVP-A 구현 완료 + harness-sandbox golden-01-greet E2E PASS (commit `9243bb3`). §12 부록 추가. |
+
+---
+
+## 12. 구현 회고 — MVP-A 부록
+
+### 12.1 실제 파일 배치 (§10-5 대비 확정)
+
+| 예정 | 실제 | 변동 |
+|------|------|------|
+| `lib/harness/phase.<sh|py>` | `lib/harness/phase.py` | Python 확정 |
+| `lib/harness/checks.sh` | `lib/harness/checks.sh` | 동일 |
+| `crew/personas/{planner,implementer}.md` | 동일 | 21/19줄 (16줄 규격 근사, 페르소나별 harness 계약 강제 문구 때문에 초과) |
+| `state/harness/<task>/{state.json, plan.md, logs/}` | 동일 | 동일 |
+| 신규 | `lib/harness/runner.py` | claude CLI 래퍼를 별 모듈로 분리 (phase.py 비대화 방지) |
+
+### 12.2 smoke에서 발견한 실제 실패 모드
+
+**(a) pyenv `python` shim 부재 → 1차 impl 3회 전부 exit 127.**
+- 증상: planner가 sandbox CLAUDE.md 안내 문구 "`python -m pytest`"를 복사해 plan.md::tests에 넣음. 이 환경은 pyenv라 `python` 미존재, `python3`만 유효.
+- 확인: retry 3회 전부 동일 exit 127 — plan.md::tests가 고정이라 implementer가 고칠 수 없음 (persona가 plan.md 편집 금지). 설계대로 올바른 실패.
+- 조치 (2026-04-25 반영):
+  - `phase.py::normalize_tests_command` — `shutil.which("python") is None and which("python3")`일 때 `\bpython(?![\w.])` → `python3` 방어적 치환.
+  - sandbox `CLAUDE.md` — "반드시 `python3`" 명시.
+- 교훈: **planner는 타깃 리포의 CLAUDE.md 문구를 문자 그대로 신뢰**. 타깃 쪽 안내 문구가 잘못되면 실패는 확실하다. 이는 스펙 주도 개발 원칙의 이면 — 스펙 오염이 있으면 결과도 오염.
+
+**(b) commit 제목이 `plan.md`로 부실 생성.**
+- 증상: planner가 plan.md의 H1을 `# plan.md`로 박았고, commit phase는 이를 그대로 커밋 제목으로 사용.
+- 영향: MVP-A 동작 자체엔 문제 없음. 로그 가독성만 저하.
+- 조치: **후속** (이번 커밋 범위 밖). planner persona에 "H1은 `<type>: <descriptive subject>` 컨벤션 커밋 제목" 가이드 추가하는 형태.
+
+### 12.3 MVP-D 진입 전 선행 과제 (남은 후속)
+
+§10의 TODO 중 남은 것 + 12.2(b)에서 발생한 건 포함:
+
+- **planner H1 컨벤션 가이드** — 12.2(b) 조치
+- **Failure 로깅 정책** — state.json `attempts[].log_path`만으로 재진입 가능성 검증 (§10-6)
+- **MVP-D preview** — `gh pr view --comments`, CodeRabbit 파싱 (§10-7)
+- **sandbox failure 시나리오 추가** — 현재 golden-01만 있음. 의도적 경계 이탈, 테스트 실패, 타임아웃 각 1케이스
