@@ -1,6 +1,6 @@
 # MVP-D — `review-apply → merge` Preview
 
-**상태**: 리서치 초안 (2026-04-25)
+**상태**: 리서치 초안 (초안 작성일: 2026-04-25)
 **전제**: MVP-A (commit `9243bb3`) 완료. 이 문서는 MVP-D 구현 착수 전 사전 조사 + 설계 초안.
 **범위**: CodeRabbit이 리뷰를 남긴 기존 PR을 대상으로, 자동 반영 → 머지까지.
 
@@ -40,7 +40,7 @@
 
 **주의**: `gh pr view --comments`는 issue comment만. 인라인 리뷰는 `gh api .../comments`로 따로 가져와야 함. **두 채널 모두** 폴링해야 전체 피드백 획득.
 
-### 2.2 CodeRabbit 포맷 (primary source 확인, 2026-04-25 기준)
+### 2.2 CodeRabbit 포맷 (primary source 참조 — 초안 작성일: 2026-04-25)
 
 **Bot identity**: `coderabbitai[bot]` (id 136622811, type Bot) + `coderabbitai` (id 132028505, type Organization). 필터 식: `user.login in {"coderabbitai[bot]", "coderabbitai"}`.
 
@@ -286,4 +286,4 @@ After applying, run the repo's test command (<TEST_CMD>) and report the last 20 
 
 | 일자 | 내용 |
 |------|------|
-| 2026-04-25 | 초안. gh CLI 표면 확인 + CodeRabbit 포맷 primary source 확인 + phase 분할 4안 + persona 재사용 전략. |
+| 2026-04-25 (초안 작성일) | 초안. gh CLI 표면 참조 + CodeRabbit 포맷 primary source 참조 + phase 분할 4안 + persona 재사용 전략. |
