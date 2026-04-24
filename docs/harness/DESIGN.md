@@ -247,7 +247,8 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 | 2026-04-25 | CodeRabbit 10 finding fix (commit `0fd04a0`) — 1 false positive 기록, 1 design-level deferred. |
 | 2026-04-25 | Round-4 fixes + §13.6 #1/#3 구현 (commit `f811840`) — token sanitize, None-line ranges, tests_cmd validator, semantic validation, non-auto gate count. §13.6 상태 업데이트. |
 | 2026-04-25 | Post-merge 폴리싱 wave 1 (commit `1681de2`, `93e6835`, `264fbc1`) — S1 author trailer, S2 planner H1 convention, S4 nitpicks (4/9 반영), S5 `.claude/` gitignore, S3 sandbox failure scenarios. |
-| 2026-04-25 | Post-merge 폴리싱 wave 2 (신규 커밋 예정) — §13.6 #5 fresh-data gate, §13.6 #6 MVP-B `pr-create` phase. |
+| 2026-04-25 | Post-merge 폴리싱 wave 2 (commit `7e1869e`) — §13.6 #5 fresh-data gate, §13.6 #6 MVP-B `pr-create` phase. |
+| 2026-04-25 | V1 pr-create live validation PASS + `validate_tests_command` shlex/quote-aware refactor (commit `6ce8454`). PR #2 created by harness, auto-closed (test-only). 자세한 내용 §13.7. |
 
 ---
 
@@ -360,3 +361,30 @@ PR#1 적용 결과: 18 → 6 eligible (전부 Minor, 전부 docs/markdown/lint).
   - Sanity: 현재 브랜치가 main/master면 refuse (feature branch 의도 보호).
   - Base branch: `--base` CLI (default `main`).
   - 기존 MVP-A 태스크와 back-compat: `state.ensure_phase_slot()`이 `pr-create` 슬롯을 on-the-fly 추가.
+
+### 13.7 V1 pr-create live smoke + validator shlex refactor (2026-04-25)
+
+목적: Wave 2의 `pr-create`를 실제 GitHub 리포 대상으로 E2E 검증. 대상은
+crewai 리포 자체 (cosmetic intent: lib/harness/tests/__init__.py 패키지
+docstring 추가).
+
+**결과**: PR #2 생성 PASS, 자동 close(non-merge)로 정리.
+
+| phase | 결과 | 비고 |
+|-------|------|------|
+| plan | 1회 | H1이 conventional-commit `docs: add package docstring …` 포맷으로 즉시 생성 (S2 효과) |
+| impl | 1회 (재시도 후) | 초기 validator 버그로 한 번 차단 → 수정 후 통과 |
+| commit | 1회 | SHA `3579ac0`, 메시지는 `docs: …` + `Co-Authored-By: crewai-harness <harness-mvp@local>` trailer (S1 효과) |
+| pr-create | 1회 | https://github.com/HardcoreMonk/crewai-debate/pull/2, body는 `## Summary/Out of scope/Verification` + harness footer 렌더링 정상 |
+| (cleanup) | — | `gh pr close --delete-branch` — PR closed + remote `test/pr-create-smoke` 삭제 |
+
+**과정에서 발견한 버그**: S4의 `validate_tests_command` (commit `f811840`)가
+regex 기반이라 quote를 이해하지 못함. 정상적인 `python3 -c "code; assert y"`
+같은 커맨드를 **false-reject**. 이번 V1에서 즉시 수정 (commit `6ce8454`):
+- shlex.split(posix=False)로 quote 상태 보존 → 통째로 quoted인 토큰은 내부
+  operator 무시, 나머지 unquoted 토큰만 검증.
+- 14/14 테스트 케이스 통과 (새 3개 quoted-interior + 기존 11개).
+
+**영속 효과**: V1 자체는 test-only(PR closed)였지만 파생된 validator fix
+와 live smoke evidence는 main에 영구 기록. pr-create phase가 이제 공식적으로
+"live validation passed" 상태.
