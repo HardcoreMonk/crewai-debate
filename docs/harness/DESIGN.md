@@ -246,6 +246,8 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 | 2026-04-25 | MVP-D live smoke on PR#1 완주 — 5 phase 전원 실행, 머지 게이트 의도적 차단. §13 부록 추가. |
 | 2026-04-25 | CodeRabbit 10 finding fix (commit `0fd04a0`) — 1 false positive 기록, 1 design-level deferred. |
 | 2026-04-25 | Round-4 fixes + §13.6 #1/#3 구현 (commit `f811840`) — token sanitize, None-line ranges, tests_cmd validator, semantic validation, non-auto gate count. §13.6 상태 업데이트. |
+| 2026-04-25 | Post-merge 폴리싱 wave 1 (commit `1681de2`, `93e6835`, `264fbc1`) — S1 author trailer, S2 planner H1 convention, S4 nitpicks (4/9 반영), S5 `.claude/` gitignore, S3 sandbox failure scenarios. |
+| 2026-04-25 | Post-merge 폴리싱 wave 2 (신규 커밋 예정) — §13.6 #5 fresh-data gate, §13.6 #6 MVP-B `pr-create` phase. |
 
 ---
 
@@ -352,3 +354,9 @@ PR#1 적용 결과: 18 → 6 eligible (전부 Minor, 전부 docs/markdown/lint).
 - **#2 재리뷰 루프 N=2 실전 검증** — ✅ **유도 검증 완료**. PR#1이 자연스럽게 4 라운드 수렴 (actionable 18→3→2→1). `bump_round()` 호출 없이 각 커밋 push로 CodeRabbit 재리뷰가 트리거됐고 feedback이 단조 감소. `bump_round()`는 명시적 재시작(예: round 실패 후 재도전) 용도로 유지 — 자연스러운 append-commit 재리뷰에는 불필요.
 - **#3 머지 게이트 non-auto 미해결 카운트** — ✅ **구현** (`f811840`). `_count_unresolved_non_auto()`가 `comments.json`에서 `!is_resolved && !auto_applicable`를 세어 게이트에 명시적 변수로 추가. `reviewDecision` 간접 프록시에 의존하지 않음.
 - **#4 CodeRabbit 외 리뷰봇 대응** — ⏸ **연기**. 현재 대상 리뷰봇 없음. 필요 시점에 author 화이트리스트 확장 + severity 매핑 테이블 추상화.
+- **#5 머지 게이트 fresh-data (신규)** — ✅ **구현** (post-merge 폴리싱). `gh.fetch_live_review_summary()`가 매 merge 시점에 inline comments + GraphQL 스레드 해제 상태를 재조회해 `inline_unresolved_non_auto` live 값을 산출. `cmd_merge`는 live 값을 게이트에 사용하고, stale `_count_unresolved_non_auto`는 감사/디버깅용으로 로그에만 병기. live fetch 실패 시 stale로 fallback (보수적 차단).
+  - 동기: live-smoke-0 merge 시점에 게이트가 round-1 comments.json(12)을 봐서 차단됐는데 실제 live는 non-auto=2였음 — 그래도 0 아니라 manual merge 정당화됐지만, fresh 숫자가 **진실**을 보여주는 게 운영 편의에 필수.
+- **#6 MVP-B pr-create (신규)** — ✅ **구현** (post-merge 폴리싱). `cmd_pr_create`가 MVP-A 체인(`plan→impl→commit`) 뒤에 붙어 branch push + `gh pr create` 실행. PR title = plan.md H1(이미 conventional-commit 포맷 강제됨), body = `## Summary` / `## Out of scope` / `## Verification` + harness provenance footer. 성공 시 `state.pr_number`/`pr_url` 기록 + MVP-D `review-wait` 호출 커맨드 제안 출력. 이로써 `1줄 intent → merged PR` 전체 흐름이 harness로 연결됨.
+  - Sanity: 현재 브랜치가 main/master면 refuse (feature branch 의도 보호).
+  - Base branch: `--base` CLI (default `main`).
+  - 기존 MVP-A 태스크와 back-compat: `state.ensure_phase_slot()`이 `pr-create` 슬롯을 on-the-fly 추가.

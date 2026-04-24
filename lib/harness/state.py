@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-PHASES_IMPLEMENT: list[str] = ["plan", "impl", "commit"]
+PHASES_IMPLEMENT: list[str] = ["plan", "impl", "commit", "pr-create"]
 PHASES_REVIEW: list[str] = ["review-wait", "review-fetch", "review-apply", "review-reply", "merge"]
 ALL_PHASES: list[str] = PHASES_IMPLEMENT + PHASES_REVIEW
 
@@ -86,6 +86,8 @@ def init_state(task_slug: str, intent: str, target_repo: str) -> dict[str, Any]:
         "updated_at": now,
         "current_phase": PHASES_IMPLEMENT[0],
         "commit_sha": None,
+        "pr_number": None,
+        "pr_url": None,
         "phases": {
             p: {"status": STATUS_PENDING, "attempts": [], "final_output_path": None}
             for p in PHASES_IMPLEMENT
@@ -93,6 +95,20 @@ def init_state(task_slug: str, intent: str, target_repo: str) -> dict[str, Any]:
     }
     save_state(state)
     return state
+
+
+def set_pr_info(state: dict[str, Any], *, pr_number: int, pr_url: str) -> None:
+    state["pr_number"] = pr_number
+    state["pr_url"] = pr_url
+    save_state(state)
+
+
+def ensure_phase_slot(state: dict[str, Any], phase: str) -> None:
+    """Back-compat: add a missing phase slot to existing tasks created before
+    the phase was introduced."""
+    if phase not in state["phases"]:
+        state["phases"][phase] = {"status": STATUS_PENDING, "attempts": [], "final_output_path": None}
+        save_state(state)
 
 
 def init_review_state(

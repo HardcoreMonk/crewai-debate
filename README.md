@@ -36,9 +36,12 @@ python3 lib/harness/phase.py plan add-feature-X \
   --intent "Add …" \
   --target-repo /path/to/target
 
-python3 lib/harness/phase.py impl   add-feature-X
-python3 lib/harness/phase.py commit add-feature-X
+python3 lib/harness/phase.py impl      add-feature-X
+python3 lib/harness/phase.py commit    add-feature-X
+python3 lib/harness/phase.py pr-create add-feature-X          # optional: push + open PR
 ```
+
+The `pr-create` phase is the bridge from MVP-A to MVP-D: after it finishes it prints the exact `review-wait` command to run next, so `intent → merged PR` works as a single chain when CodeRabbit is installed on the target repo.
 
 **MVP-D pipeline** — auto-apply CodeRabbit feedback on an existing PR:
 

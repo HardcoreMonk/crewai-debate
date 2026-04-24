@@ -224,6 +224,78 @@ def merge_pr(
 # ---- convenience predicates ----
 
 
+def fetch_live_review_summary(base_repo: str, pr_number: int) -> dict:
+    """Real-time snapshot of a PR's CodeRabbit review state.
+
+    Unlike the state.json-stored comments.json (which captures the snapshot
+    at review-fetch time and goes stale as new commits land), this walks the
+    CURRENT PR and returns counts usable for a merge-gate decision.
+
+    Returns:
+        {
+          "inline_total":           int,  # CodeRabbit inline comments
+          "inline_auto_applicable": int,  # …eligible per our policy
+          "inline_unresolved_non_auto": int,  # the gate-blocking count
+          "resolved_via_graphql":   int,  # how many threads user clicked Resolve
+          "latest_review_id":       int | None,
+          "latest_actionable":      int | None,   # from latest review body
+        }
+    """
+    from coderabbit import (
+        is_coderabbit_author, parse_inline_comment, classify_review_object,
+        is_auto_applicable,
+    )
+
+    try:
+        inline_raw = list_inline_comments(base_repo, pr_number)
+    except GhError:
+        inline_raw = []
+    try:
+        thread_res = list_review_thread_resolutions(base_repo, pr_number)
+    except GhError:
+        thread_res = []
+    resolved_ids = {tr.comment_id for tr in thread_res if tr.is_resolved}
+
+    inline_total = 0
+    inline_auto_applicable = 0
+    inline_unresolved_non_auto = 0
+    for raw in inline_raw:
+        if not is_coderabbit_author(raw.get("user")):
+            continue
+        ic = parse_inline_comment(raw)
+        is_res = ic.is_resolved or (ic.id in resolved_ids)
+        auto = is_auto_applicable(
+            severity=ic.severity, criticality=ic.criticality, is_resolved=is_res,
+        )
+        inline_total += 1
+        if auto:
+            inline_auto_applicable += 1
+        elif not is_res:
+            inline_unresolved_non_auto += 1
+
+    latest_review_id: int | None = None
+    latest_actionable: int | None = None
+    try:
+        reviews = list_reviews(base_repo, pr_number)
+    except GhError:
+        reviews = []
+    bot_reviews = [r for r in reviews if is_coderabbit_author(r.get("user"))]
+    if bot_reviews:
+        newest = max(bot_reviews, key=lambda r: r.get("submitted_at") or "")
+        sig = classify_review_object(newest)
+        latest_review_id = sig.review_id
+        latest_actionable = sig.actionable_count
+
+    return {
+        "inline_total": inline_total,
+        "inline_auto_applicable": inline_auto_applicable,
+        "inline_unresolved_non_auto": inline_unresolved_non_auto,
+        "resolved_via_graphql": len(resolved_ids),
+        "latest_review_id": latest_review_id,
+        "latest_actionable": latest_actionable,
+    }
+
+
 def is_pr_mergeable(pr: dict) -> tuple[bool, list[str]]:
     """Return (mergeable, reasons). Mergeable iff all hard gates pass.
 

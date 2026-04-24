@@ -143,12 +143,26 @@ def _patch_gh(scratch_repo: Path) -> None:
         state_store["merged"] = True
         return "mock-merge-sha"
 
+    def fake_fetch_live_review_summary(base_repo, pr_number):
+        # Mock intentionally returns 1 unresolved non-auto so the gate stays
+        # consistent with the stale-data behaviour (fixture has one
+        # potential_issue). Real live queries would adapt naturally.
+        return {
+            "inline_total": 4,
+            "inline_auto_applicable": 2,
+            "inline_unresolved_non_auto": 1,
+            "resolved_via_graphql": 1,
+            "latest_review_id": 2987654321,
+            "latest_actionable": 3,
+        }
+
     gh.pr_view = fake_pr_view
     gh.list_reviews = fake_list_reviews
     gh.list_inline_comments = fake_list_inline_comments
     gh.list_review_thread_resolutions = fake_list_review_thread_resolutions
     gh.post_pr_comment = fake_post_pr_comment
     gh.merge_pr = fake_merge_pr
+    gh.fetch_live_review_summary = fake_fetch_live_review_summary
 
 
 def _patch_push(scratch_repo: Path) -> None:
