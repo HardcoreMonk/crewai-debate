@@ -609,16 +609,23 @@ def _find_adr_dir(target_repo: Path) -> Path | None:
     return None
 
 
-def _next_adr_number(adr_dir: Path) -> tuple[int, int]:
-    """Return (next_number, digit_width) inferred from existing filenames.
-    Default to (1, 4) when the directory is empty or unrecognised."""
+def _next_adr_number(adr_dir: Path, *, override_width: int | None = None) -> tuple[int, int]:
+    """Return (next_number, digit_width).
+
+    Width resolution order (DESIGN §13.6 #7-1):
+      1. If `adr_dir` already has matching files, the **existing** convention
+         wins — `override_width` is ignored. Mixing widths in one directory
+         breaks cross-links, so an existing project's choice is authoritative.
+      2. If empty AND `override_width` is given, use it.
+      3. Otherwise default to 4.
+    """
     nums: list[tuple[int, int]] = []
     for f in adr_dir.iterdir():
         m = _ADR_FILENAME_RE.match(f.name)
         if m:
             nums.append((int(m.group(1)), len(m.group(1))))
     if not nums:
-        return 1, 4
+        return 1, (override_width if override_width and override_width > 0 else 4)
     last_num, width = max(nums)
     return last_num + 1, width
 
@@ -689,7 +696,9 @@ def cmd_adr(args) -> int:
             "the harness will not make for you."
         )
 
-    next_num, width = _next_adr_number(adr_dir)
+    next_num, width = _next_adr_number(
+        adr_dir, override_width=getattr(args, "adr_width", None)
+    )
     num_str = f"{next_num:0{width}d}"
     plan_path = Path(s["phases"]["plan"]["final_output_path"])
     plan_text = plan_path.read_text()
@@ -1563,6 +1572,14 @@ def main() -> int:
         "--auto-commit", action="store_true",
         help="adr: stage and commit the new ADR file on the current branch "
              "(default: leave untracked for operator review).",
+    )
+    # adr — first-ADR width override (§13.6 #7-1). Only consulted when the
+    # target's docs/adr/ has no existing matching files; once any ADR exists,
+    # its detected width is authoritative.
+    ap.add_argument(
+        "--adr-width", type=int, default=None,
+        help="adr: number-of-digits to use when starting a fresh docs/adr/ "
+             "(default: 4). Ignored when the directory already has ADRs.",
     )
     # merge
     ap.add_argument("--dry-run", action="store_true", help="merge: evaluate gate, don't merge")
