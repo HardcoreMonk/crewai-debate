@@ -144,6 +144,8 @@ def init_review_state(
         "created_at": now,
         "updated_at": now,
         "current_phase": PHASES_REVIEW[0],
+        "seen_review_id_max": None,
+        "seen_issue_comment_id_max": None,
         "phases": {
             "review-wait": {
                 "status": STATUS_PENDING, "attempts": [],
@@ -264,6 +266,26 @@ def set_review_metadata(
     state["phases"]["review-wait"]["review_sha"] = review_sha
     state["phases"]["review-wait"]["actionable_count"] = actionable_count
     save_state(state)
+
+
+def set_seen_review_id_max(state: dict[str, Any], *, review_id: int) -> None:
+    """Record the highest formal-review id consumed by review-wait. Monotone:
+    a smaller value never overwrites. Survives bump_round (§13.6 #7-7)."""
+    cur = int(state.get("seen_review_id_max") or 0)
+    rid = int(review_id or 0)
+    if rid > cur:
+        state["seen_review_id_max"] = rid
+        save_state(state)
+
+
+def set_seen_issue_comment_id_max(state: dict[str, Any], *, comment_id: int) -> None:
+    """Record the highest issue-comment id consumed by review-wait. Monotone:
+    a smaller value never overwrites. Survives bump_round (§13.6 #7-7)."""
+    cur = int(state.get("seen_issue_comment_id_max") or 0)
+    cid = int(comment_id or 0)
+    if cid > cur:
+        state["seen_issue_comment_id_max"] = cid
+        save_state(state)
 
 
 def set_head_branch(state: dict[str, Any], branch: str) -> None:
