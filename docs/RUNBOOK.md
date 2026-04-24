@@ -88,9 +88,11 @@ The gate string enumerates exactly which condition failed. Crosswalk to DESIGN �
 - `unresolved_non_auto=N` → Major/Critical CodeRabbit comments still open on the **live** PR (not the stale `comments.json` snapshot). These need a human.
 - `skipped_comments=N` → `review-apply` couldn't apply N comments; each appears in `state.json::phases.review-apply.skipped_comment_ids` with a `reason`.
 - `mergeStateStatus=UNSTABLE` → CI hasn't finished. Wait and re-run.
-- `reviewDecision='CHANGES_REQUESTED'` → a human reviewer explicitly blocked.
+- `reviewDecision='CHANGES_REQUESTED'` or `'REVIEW_REQUIRED'` → human reviewer explicitly blocked, or branch protection demands review. (`null` and `""` are *allowed* — the latter is what `gh` returns when no review rule exists; see DESIGN §13.6 #8.)
 
 If the gate blocks but you're confident, bypass with `gh pr merge <n> --squash` directly. Note the bypass in the PR conversation or a commit trailer.
+
+**Known limitation (§13.6 #10, open).** `review-wait` currently fails to complete on a PR where CodeRabbit finds zero actionable items — it posts `"No actionable comments were generated"` as an issue comment *without* a formal review object, which `classify_review_body` doesn't recognise. Until fixed, zero-finding PRs reach `review-wait timed out after 600s`; bypass with `gh pr merge` the same way.
 
 ## Rotating commit author
 
@@ -110,3 +112,18 @@ Without these vars, harness uses the target repo's `git config user.name/email`.
 - `logs/<phase>-<idx>.log` — one per attempt
 
 Nothing else. Clean up a task by deleting its directory.
+
+## Pruning old state (GC)
+
+**When:** `state/harness/` is growing from accumulated dogfood runs and you want to reclaim disk without risking any live state.
+
+```bash
+python3 lib/harness/gc.py                       # dry-run: print KEEP / PRUNE lines
+python3 lib/harness/gc.py --apply               # actually delete, retention=20 completed
+python3 lib/harness/gc.py --keep 10 --apply     # keep only the newest 10 completed
+python3 lib/harness/gc.py --root /alt/state/harness --apply  # override root
+```
+
+**Retention policy:** every task whose `state.json` shows any phase `running`/`pending`, or a non-terminal `current_phase`, is **always kept** — `--keep` only applies to completed tasks. Corrupt / unreadable / non-dict / non-UTF-8 `state.json` entries are *skipped with a warning* and left in place, never deleted.
+
+Dry-run is the default; `--apply` must be passed explicitly. See ADR-0001 for the full policy and alternatives considered.
