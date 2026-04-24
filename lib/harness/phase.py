@@ -863,8 +863,18 @@ def cmd_review_wait(args) -> int:
     if head:
         state.set_head_branch(s, head)
 
+    # Cross-round staleness gate (§13.6 #7-7). GitHub assigns monotonically
+    # increasing ids to reviews and issue comments, so any item with id <=
+    # watermark belongs to a previous round we already consumed. Watermarks
+    # survive bump_round and only advance forward.
+    seen_review_max = int(s.get("seen_review_id_max") or 0)
+    seen_issue_max = int(s.get("seen_issue_comment_id_max") or 0)
+
     with log.open("w") as logf:
-        logf.write(f"review-wait: base={base_repo} pr={pr_number} head={head}\n")
+        logf.write(
+            f"review-wait: base={base_repo} pr={pr_number} head={head} "
+            f"seen_review_max={seen_review_max} seen_issue_max={seen_issue_max}\n"
+        )
         poll_count = 0
         while True:
             poll_count += 1
@@ -878,7 +888,11 @@ def cmd_review_wait(args) -> int:
                 time.sleep(REVIEW_POLL_INTERVAL_SEC)
                 continue
 
-            bot_reviews = [r for r in reviews if coderabbit.is_coderabbit_author(r.get("user"))]
+            bot_reviews = [
+                r for r in reviews
+                if coderabbit.is_coderabbit_author(r.get("user"))
+                and int(r.get("id") or 0) > seen_review_max
+            ]
             newest_sig: coderabbit.ReviewSignal | None = None
             newest_review: dict | None = None
             for r in bot_reviews:
@@ -896,6 +910,7 @@ def cmd_review_wait(args) -> int:
             # Checking only reviews would hang the poll loop for the full
             # timeout on either case.
             issue_sig: coderabbit.ReviewSignal | None = None
+            issue_sig_comment_id: int = 0
             try:
                 issues = gh.list_issue_comments(base_repo, pr_number)
             except gh.GhError as e:
@@ -904,12 +919,16 @@ def cmd_review_wait(args) -> int:
             for ic in issues:
                 if not coderabbit.is_coderabbit_author(ic.get("user")):
                     continue
+                ic_id = int(ic.get("id") or 0)
+                if ic_id <= seen_issue_max:
+                    continue
                 body = ic.get("body") or ""
                 sig = coderabbit.classify_review_body(body)
                 if sig.kind in ("skipped", "failed", "complete"):
                     if issue_sig is None or (ic.get("created_at") or "") > (getattr(issue_sig, "submitted_at", "") or ""):
                         issue_sig = sig
                         issue_sig.submitted_at = ic.get("created_at")
+                        issue_sig_comment_id = ic_id
 
             logf.write(
                 f"poll {poll_count} at {now_iso}: reviews={len(reviews)} "
@@ -932,6 +951,9 @@ def cmd_review_wait(args) -> int:
                         review_id=int(newest_sig.review_id or 0),
                         review_sha=str(newest_sig.commit_sha or ""),
                         actionable_count=int(newest_sig.actionable_count or 0),
+                    )
+                    state.set_seen_review_id_max(
+                        s, review_id=int(newest_sig.review_id or 0)
                     )
                     state.finish_attempt(s, "review-wait", exit_code=0,
                                          note=f"actionable={newest_sig.actionable_count}")
@@ -956,6 +978,9 @@ def cmd_review_wait(args) -> int:
                     review_id=0,
                     review_sha="",
                     actionable_count=actionable,
+                )
+                state.set_seen_issue_comment_id_max(
+                    s, comment_id=issue_sig_comment_id
                 )
                 state.finish_attempt(s, "review-wait", exit_code=0,
                                      note=f"actionable={actionable} (issue-comment)")
