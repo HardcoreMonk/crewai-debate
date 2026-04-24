@@ -212,7 +212,7 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 3. **Persona 프롬프트 문안**: `crew/personas/planner.md`, `crew/personas/implementer.md` 초안 (16줄 규격 유지).
 4. **Sandbox 초기 시나리오**: 더미 이슈 3~5개 구체 문안. 의도적 failure 케이스 포함.
 5. **디렉터리 레이아웃 동결**:
-   ```
+   ```text
    crewai/
    ├─ lib/
    │  ├─ crew-dispatch.sh           # 기존 debate용, 건드리지 않음
