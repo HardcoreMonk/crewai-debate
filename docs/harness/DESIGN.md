@@ -259,6 +259,7 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 | 2026-04-25 | Post-merge 폴리싱 wave 2 (commit `7e1869e`) — §13.6 #5 fresh-data gate, §13.6 #6 MVP-B `pr-create` phase. |
 | 2026-04-25 | V1 pr-create live validation PASS + `validate_tests_command` shlex/quote-aware refactor (commit `6ce8454`). PR #2 created by harness, auto-closed (test-only). 자세한 내용 §13.7. |
 | 2026-04-25 | §13.6 #3b MVP-B `adr` phase 구현 + skipped nitpick 2건 polish (pagination cap 경고 / boundary delete 주석 명시). |
+| 2026-04-25 | Full-chain dogfood 첫 완주 (PR #3 merged `646c131`) — 10 phase 중 9개 harness 실행, CodeRabbit 5-round 수렴(actionable 2→0), merge는 friction #8(`reviewDecision=""`)로 out-of-band. §13.8 부록 + §13.6 #7-1~#7-8 + #8 등재. |
 
 ---
 
@@ -372,6 +373,17 @@ PR#1 적용 결과: 18 → 6 eligible (전부 Minor, 전부 docs/markdown/lint).
   - Sanity: 현재 브랜치가 main/master면 refuse (feature branch 의도 보호).
   - Base branch: `--base` CLI (default `main`).
   - 기존 MVP-A 태스크와 back-compat: `state.ensure_phase_slot()`이 `pr-create` 슬롯을 on-the-fly 추가.
+- **#7 Full-chain dogfood frictions (PR #3, §13.8)** — ⏳ **open**. self-dogfood 첫 완주에서 발굴한 design-level 마찰 8건. 각 항목은 별개 fix 단위이며 하나의 대형 리팩터가 아님. 우선순위는 대개 #7-4 > #7-7 > #7-5 > 나머지.
+  - **#7-1 ADR width default 0-pad 충돌** — `_next_adr_number()`가 빈 `docs/adr/`에서 `(1, 4)` default로 4자리 폭을 선택하는데, 프로젝트가 다른 컨벤션(e.g. `NNN`)을 문서로 선언해뒀다면 불일치. Fix: `--adr-width` CLI flag 또는 `docs/adr/README.md`의 파일명 패턴을 우선 규약으로 읽기.
+  - **#7-2 adr-writer가 plan.md 문구를 그대로 승계** — plan.md가 잘못된 invocation(`python3 -m lib.harness.gc` 같은)을 담으면 ADR의 `## Decision`에 그대로 새김. Fix: ADR 프롬프트에 "invocation은 실제 코드로 검증되는 대표 커맨드만 쓰라" 같은 가드 라인 + adr 생성 후 sanity lint (e.g. named 파일 존재 확인).
+  - **#7-3 adr-phase 파일명 drift** — plan.md `## files`가 `docs/adr/001-…md`인데 adr phase가 `0001-…-policy.md`로 쓰면 commit phase의 `git add -A -- <plan.md path>`가 ADR 파일을 못 주워감. Fix: adr phase가 생성 직후 plan.md의 해당 라인을 실제 경로로 **rewrite** + commit, 또는 plan phase가 ADR 경로를 미리 확정.
+  - **#7-4 (major) adr ↔ impl phase 워크스페이스 충돌** — impl phase는 clean workspace를 요구하지만 adr phase는 의도적으로 untracked 파일을 남김. 중간에 사람이 `git add + commit`을 해야 다음 phase로 갈 수 있음 — "harness 1 intent 완주"라는 서사를 깨뜨리는 가장 큰 마찰. Fix 후보: (a) `adr --auto-commit` 플래그(§13.6 #3b의 non-auto-commit 원칙과 충돌), (b) impl phase가 plan.md `## files`에 등재된 untracked 파일은 허용, (c) adr phase 결과를 staged-only로 남기고 impl은 그 위에 덧쓰기.
+  - **#7-5 plan.md 내 파일별 설명이 downstream verbatim** — implementer persona가 plan.md의 `## changes` 한 줄을 구현 지시로 받아들이기 때문에, plan.md에 오타/stale 경로/내부 조정 문구가 있으면 그대로 code/diff로 재현. dogfood에서 `001-…md`라는 망가진 링크를 README에 그대로 쓴 사례 발생. Fix: plan phase 출력 후 사람이 확정 리뷰하는 gate를 넣거나(지금도 사람은 읽지만 gate 아님), plan linter가 `## files`와 `## changes` 내 참조를 cross-check.
+  - **#7-6 commit/PR body가 plan.md `## changes` verbatim** — 내부 coordination 문구(e.g. "ALREADY CREATED … DO NOT regenerate")와 stale reference가 public git log + GitHub PR body로 유출. Fix: plan.md에 `<!-- internal -->` 마커를 추가해 commit body 생성 시 스트립, 또는 plan에 별도 `## commit-body` 섹션을 두어 `## changes`와 분리.
+  - **#7-7 (major) review-wait staleness across rounds** — `bump_round()`가 review-wait metadata를 reset하더라도 cmd_review_wait의 "newest review" 선택 로직에 **이전 round의 review_sha를 제외하는 필터가 없음**. 재리뷰가 아직 안 올라온 상태에서 호출하면 stale review를 재사용하고 round를 잘못 전진시킴. Fix: review-wait이 state.json의 `seen_review_ids` 집합을 들고 있거나, HEAD sha와 review.commit_id를 비교해 diff일 때만 accept.
+  - **#7-8 CodeRabbit 시간당 review rate limit** — 무료/미결제 플랜에서 rapid push(≤1h)가 limit에 걸림. 자동 회복 후 `@coderabbitai review` 수동 comment가 필요할 수도. Fix: review-wait poll이 issue comment에서 `rate limited` 마커 감지 → 자동 대기 + 해제 시점에 `@coderabbitai review` 자동 포스팅.
+- **#8 Harness gate receiver-less merge unsupport (신규, PR #3 §13.8에서 발견)** — (항목 번호 정리상 #7 group과 분리) — 리뷰 규칙이 없는 repo에서 gh API가 `reviewDecision=""`을 반환하면 현재 gate `rd in (None, "APPROVED")`로 영구 차단. Self-managed repo(혼자 운영)에서는 approver가 없어 harness-merge가 원리적으로 불가. Fix: `gh.is_pr_mergeable()`에서 `""`를 `None`과 동치 처리, 또는 `--allow-no-review` 명시 플래그.
+  - 우회: 이 PR #3은 `gh pr merge 3 --squash --delete-branch`로 out-of-band 머지 후, state.json에 out-of-band 사실을 기록.
 
 ### 13.7 V1 pr-create live smoke + validator shlex refactor (2026-04-25)
 
@@ -399,6 +411,58 @@ regex 기반이라 quote를 이해하지 못함. 정상적인 `python3 -c "code;
 **영속 효과**: V1 자체는 test-only(PR closed)였지만 파생된 validator fix
 와 live smoke evidence는 main에 영구 기록. pr-create phase가 이제 공식적으로
 "live validation passed" 상태.
+
+### 13.8 Full-chain dogfood on crewai self (PR #3, 2026-04-25)
+
+목적: MVP-A + MVP-B(adr/pr-create) + MVP-D가 **한 intent로 처음부터 끝까지
+관통**하는 것을 crewai 자기 리포에서 증명. 지금까지 live-smoke는 phase
+단위(§13 = MVP-D, §13.7 = pr-create)였고 10 phase 완주는 처음.
+
+**Intent**: `lib/harness/gc.py` CLI — `state/harness/<slug>/` GC with
+retention policy (keep all in-progress + last N completed, default 20),
+plus `docs/adr/0001-harness-state-retention-policy.md`.
+
+**Result**: Merged (squash `646c131`). 10 phase 중 9개가 harness로 완주,
+merge phase는 friction #8로 out-of-band 수행(gh pr merge 직접). 5 rounds of
+CodeRabbit review convergence — findings 2 → 1 → 1 → 1 → 1 → 0(resolved).
+
+| phase | 결과 | 비고 |
+|-------|------|------|
+| plan | 1회 | H1 = `feat: add harness state gc CLI with retention policy` (conventional commit 형식 자동) |
+| adr | 1회 | `0001-harness-state-retention-policy.md` 생성 (파일명 width=4 자동 선택, 빈 디렉토리 default) |
+| impl | 1회 | `gc.py` 111줄 + `test_gc.py` 4 cases 첫 패스. tests 통과 |
+| commit | 1회 | `f1dc5ce` — 주의: commit body가 plan.md `## changes` verbatim이라 수동 조정 문구 leaked (friction #7-6) |
+| pr-create | 1회 | PR #3 오픈. body에도 동일 leak |
+| **review round 1** | 2 findings (둘 다 non-auto) | negative --keep / rmtree per-dir. auto=False라 apply=0, merge dry-run gate 차단 (의도대로) |
+| **review round 2** | 1 new finding | non-dict state.json — 직전 2건은 CodeRabbit이 auto-resolved |
+| **review round 3** | 1 new finding | `_classify()` 방어 (phases non-dict, current_phase non-str) |
+| **review round 4** | 1 new finding | UnicodeDecodeError. 직전에 **CodeRabbit rate-limit** 진입 (friction #7-8) — `@coderabbitai review` 수동 재트리거 필요 |
+| **review round 5** | 0 unresolved | 5/5 findings resolved. `inline_unresolved_non_auto=0`, `skipped_comment_ids=[]` |
+| merge | gate block → OOB | gate #3 `reviewDecision=""` (approver 없음 → 리뷰 규칙 없는 리포의 빈 문자열)에서 차단. OOB = `gh pr merge 3 --squash --delete-branch`. state.json은 out-of-band 사실과 `merge_sha=646c131`을 기록 |
+
+**라운드별 actionable 추이** (review-wait가 stale review를 재사용하는
+friction #7-7 때문에 round 2는 수동 state reset 필요):
+
+```
+round 1 : actionable=2   (new: negative --keep, rmtree per-dir)
+round 2 : actionable=1   (resolved×2, new: non-dict state.json)
+round 3 : actionable=1   (resolved×1, new: _classify 방어)
+round 4 : actionable=1   (resolved×1, new: UnicodeDecodeError)      ← rate-limit 진입
+round 5 : actionable=0   (resolved×1) ← 수렴
+```
+
+**Timings (approx)**:
+- plan/adr/impl/commit/pr-create 총 ~6분 (LLM phase 4개 + git 2개)
+- Round 1 review wait: ~3분 (CodeRabbit CHILL profile)
+- Round 2~4 각 ~4분 (wait + fix + push + rate-limit 대기)
+- Round 5: ~6분 (rate-limit로 `@coderabbitai review` 2회 수동 트리거)
+- 전체 wall-clock: ~50분
+
+**Verdict — 10 phase 중 9개 harness 완주**. merge는 gate #3 설계 버그(§13.6
+#8)로 OOB. `reviewDecision=""` 를 `None`과 동치 처리하는 gate 보완이 필요하며,
+이 수정은 별도 follow-up PR에서 진행 예정. 이번 dogfood는 **harness가 자기
+자신을 개선하는 첫 evidence**이자, 9건의 신규 friction(§13.6 #7-1~#7-8 + #8)을
+자체 발굴한 기록.
 
 ---
 
