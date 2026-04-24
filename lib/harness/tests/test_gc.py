@@ -200,6 +200,26 @@ def test_rmtree_failure_does_not_abort_sweep(harness_root, monkeypatch, capsys):
     assert "1 failed" in captured.out
 
 
+def test_non_dict_state_json_is_skipped(harness_root, capsys):
+    # Valid JSON but wrong shape — list, null, and string payloads.
+    for slug, payload in (
+        ("bad-list", "[1, 2, 3]"),
+        ("bad-null", "null"),
+        ("bad-string", "\"just a string\""),
+    ):
+        d = harness_root / slug
+        d.mkdir()
+        (d / "state.json").write_text(payload)
+
+    rc = gc_mod.main(["--root", str(harness_root), "--keep", "10"])
+    assert rc == 0
+    err = capsys.readouterr().err
+    for slug in ("bad-list", "bad-null", "bad-string"):
+        assert f"skipped {harness_root / slug}" in err
+        assert "expected JSON object" in err
+        assert (harness_root / slug).is_dir()
+
+
 def test_keep_zero_retains_only_in_progress(harness_root, capsys):
     rc = gc_mod.main(
         ["--root", str(harness_root), "--keep", "0", "--apply"]

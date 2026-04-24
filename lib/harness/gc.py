@@ -60,6 +60,9 @@ def _scan(root: Path) -> tuple[list[tuple[Path, str, str]], list[tuple[Path, str
         except (OSError, json.JSONDecodeError) as exc:
             skipped.append((child, f"unreadable state.json: {exc}"))
             continue
+        if not isinstance(data, dict):
+            skipped.append((child, "invalid state.json: expected JSON object"))
+            continue
         classification = _classify(data)
         updated_at = str(data.get("updated_at") or "")
         entries.append((child, classification, updated_at))
