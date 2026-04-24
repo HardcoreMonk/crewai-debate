@@ -197,6 +197,36 @@ def reset_target_repo(repo: Path) -> None:
     git(repo, "clean", "-fd")
 
 
+def push_branch_via_gh_token(repo: Path, branch: str) -> subprocess.CompletedProcess:
+    """git push using a gh-issued token inlined in the URL.
+
+    Avoids a persistent credential-helper config change while still letting the
+    harness push from a process that only has the gh CLI authenticated (common
+    in environments like ours where no global .gitconfig exists).
+    Falls back to a plain `git push origin` when the origin isn't HTTPS github.
+    """
+    token_proc = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
+    if token_proc.returncode != 0 or not token_proc.stdout.strip():
+        return token_proc
+    origin_proc = git(repo, "remote", "get-url", "origin")
+    if origin_proc.returncode != 0:
+        return origin_proc
+    origin_url = origin_proc.stdout.strip()
+    token = token_proc.stdout.strip()
+    if origin_url.startswith("https://github.com/"):
+        auth_url = origin_url.replace(
+            "https://github.com/",
+            f"https://x-access-token:{token}@github.com/",
+            1,
+        )
+        return subprocess.run(
+            ["git", "-C", str(repo), "push", auth_url, f"{branch}:{branch}"],
+            capture_output=True, text=True,
+        )
+    # Non-https github origin — try plain push.
+    return git(repo, "push", "origin", branch)
+
+
 def ensure_clean_repo(repo: Path) -> None:
     st = git(repo, "status", "--porcelain").stdout.strip()
     if st:
@@ -577,11 +607,16 @@ def cmd_review_fetch(args) -> int:
             "line_end": ic.line_end,
             "title": ic.title,
             "severity": ic.severity,
+            "criticality": ic.criticality,
             "ai_prompt": ic.ai_prompt,
             "diff_block": ic.diff_block,
             "raw_body": ic.raw_body,
             "is_resolved": is_res,
-            "auto_applicable": (not is_res) and (ic.severity in coderabbit.SEVERITIES_AUTO_APPLY),
+            "auto_applicable": coderabbit.is_auto_applicable(
+                severity=ic.severity,
+                criticality=ic.criticality,
+                is_resolved=is_res,
+            ),
             "created_at": ic.created_at,
         })
 
@@ -738,7 +773,7 @@ def cmd_review_apply(args) -> int:
 
     # Push autofix commits so CodeRabbit can re-review.
     if s["phases"]["review-apply"]["applied_commits"]:
-        push = git(target_repo, "push", "origin", s["head_branch"])
+        push = push_branch_via_gh_token(target_repo, s["head_branch"])
         if push.returncode != 0:
             print(f"warning: push failed — {push.stderr.strip()}", file=sys.stderr)
 

@@ -23,8 +23,11 @@ WALKTHROUGH_START = re.compile(r"<!--\s*walkthrough_start\s*-->", re.IGNORECASE)
 # Resolution tracking — CodeRabbit edits prior comments with this marker after an autofix.
 RESOLVED_RE = re.compile(r"✅\s*Addressed in commit\s+([0-9a-f]{7,40})", re.IGNORECASE)
 
-# Severity detection. Order matters: longer/more-specific names first to avoid
-# substring collisions. Emoji presence is the primary signal.
+# Severity detection. CodeRabbit uses a two-axis label in the first line:
+#   _<Type>_ | _<Criticality>_
+# where Type ∈ {Potential issue, Suggested tweak, Refactor suggestion, Nitpick}
+# and Criticality ∈ {Critical, Major, Minor} (Criticality may be absent).
+# We detect each axis independently.
 SEVERITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("suggested_tweak",     re.compile(r"♻️\s*Suggested tweak", re.IGNORECASE)),
     ("refactor_suggestion", re.compile(r"🛠️\s*Refactor suggestion", re.IGNORECASE)),
@@ -32,17 +35,36 @@ SEVERITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("nitpick",             re.compile(r"🧹\s*Nitpick", re.IGNORECASE)),
 ]
 
-# Severities eligible for automatic fix application per §1/§4.3 of MVP-D-PREVIEW.
-SEVERITIES_AUTO_APPLY = frozenset({"nitpick", "suggested_tweak", "refactor_suggestion"})
+CRITICALITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("critical", re.compile(r"🔴\s*Critical", re.IGNORECASE)),
+    ("major",    re.compile(r"🟠\s*Major",    re.IGNORECASE)),
+    ("minor",    re.compile(r"🟡\s*Minor",    re.IGNORECASE)),
+]
 
-# Inline body header. Two variants observed:
-#   `<range>`: **<Title>**
-#   `<range>`: _<severity marker>_: **<Title>**
-# The inline italic marker is optional; we skip any non-`**` prefix after the range.
-HEADER_RE = re.compile(
+# Auto-apply policy (revised after live-smoke-0 discovery on PR#1 2026-04-24):
+# Every CodeRabbit comment on a fresh large PR came back tagged as
+# `potential_issue` with varying criticality. So the eligible set must be
+# computed on the (type, criticality) tuple, not type alone.
+#
+# Rule:
+#   auto-apply if (type is a low-severity type) OR (criticality == "minor")
+# This excludes Critical/Major potential-issues (human review) while still
+# letting mechanical minor issues flow.
+SAFE_TYPES = frozenset({"nitpick", "suggested_tweak", "refactor_suggestion"})
+SAFE_CRITICALITIES = frozenset({"minor"})
+
+# Inline body header variants observed in the wild:
+#   Variant A (older/short):  `<range>`: **<Title>**
+#   Variant B (older/short):  `<range>`: _<severity>_: **<Title>**
+#   Variant C (current 2026): _<Type>_ | _<Criticality>_
+#                             <blank>
+#                             **<Title.>**
+# Try A/B first, else fall back to the first standalone `**...**` line (C).
+HEADER_A_RE = re.compile(
     r"^\s*`([^`]+)`\s*:\s*(?:_[^_\n]+_\s*:\s*)?\*\*(.+?)\*\*",
     re.MULTILINE,
 )
+HEADER_C_RE = re.compile(r"^\*\*([^*\n]+?)\*\*\s*$", re.MULTILINE)
 
 # <details><summary>...</summary> ... </details> block extractor.
 DETAILS_RE = re.compile(
@@ -72,6 +94,7 @@ class InlineComment:
     line_end: int | None
     title: str
     severity: str
+    criticality: str | None
     ai_prompt: str | None
     diff_block: str | None
     raw_body: str
@@ -80,7 +103,12 @@ class InlineComment:
     auto_applicable: bool = field(init=False)
 
     def __post_init__(self) -> None:
-        self.auto_applicable = (not self.is_resolved) and (self.severity in SEVERITIES_AUTO_APPLY)
+        if self.is_resolved:
+            self.auto_applicable = False
+            return
+        safe_type = self.severity in SAFE_TYPES
+        safe_crit = (self.criticality or "").lower() in SAFE_CRITICALITIES
+        self.auto_applicable = safe_type or safe_crit
 
 
 # ---- author filtering ----
@@ -133,6 +161,45 @@ def _detect_severity(body: str) -> str:
     return "nitpick"
 
 
+def _detect_criticality(body: str) -> str | None:
+    for name, pat in CRITICALITY_PATTERNS:
+        if pat.search(body):
+            return name
+    return None
+
+
+def is_auto_applicable(
+    *,
+    severity: str,
+    criticality: str | None,
+    is_resolved: bool,
+) -> bool:
+    """Apply auto-apply policy as documented at module level.
+
+    Resolved → never.
+    Otherwise eligible when type ∈ SAFE_TYPES or criticality ∈ SAFE_CRITICALITIES.
+    """
+    if is_resolved:
+        return False
+    safe_type = severity in SAFE_TYPES
+    safe_crit = (criticality or "").lower() in SAFE_CRITICALITIES
+    return safe_type or safe_crit
+
+
+def _extract_title(body: str) -> str:
+    # Try variant A/B first (older formats with `range`: prefix).
+    m = HEADER_A_RE.search(body)
+    if m:
+        return m.group(2).strip().rstrip(".")
+    # Variant C — first standalone `**Title.**` line, skipping the severity marker line.
+    # The first line may itself be `_<type>_ | _<crit>_` with bold-less italic markers,
+    # so HEADER_C_RE with MULTILINE picks the first pure `**...**` line.
+    m2 = HEADER_C_RE.search(body)
+    if m2:
+        return m2.group(1).strip().rstrip(".")
+    return "(untitled)"
+
+
 def _iter_details_blocks(body: str) -> list[tuple[str, str]]:
     return [(m.group("summary").strip(), m.group("content").strip())
             for m in DETAILS_RE.finditer(body)]
@@ -167,17 +234,20 @@ def parse_inline_comment(comment: dict[str, Any]) -> InlineComment:
     Expects the shape returned by `GET /repos/:o/:r/pulls/:num/comments`.
     """
     body = comment.get("body") or ""
-    header_match = HEADER_RE.search(body)
-    title = header_match.group(2).strip() if header_match else "(untitled)"
+    title = _extract_title(body)
 
+    # GitHub API already exposes path/line authoritative — only fall back to body parsing.
     api_start = comment.get("start_line")
     api_end = comment.get("line")
-    if api_start is None and api_end is None and header_match:
-        api_start, api_end = _parse_line_range(header_match.group(1))
+    if api_start is None and api_end is None:
+        m = HEADER_A_RE.search(body)
+        if m:
+            api_start, api_end = _parse_line_range(m.group(1))
     if api_start is None and api_end is not None:
         api_start = api_end
 
     severity = _detect_severity(body)
+    criticality = _detect_criticality(body)
 
     diff_block: str | None = None
     ai_prompt: str | None = None
@@ -198,6 +268,7 @@ def parse_inline_comment(comment: dict[str, Any]) -> InlineComment:
         line_end=api_end,
         title=title,
         severity=severity,
+        criticality=criticality,
         ai_prompt=ai_prompt,
         diff_block=diff_block,
         raw_body=body,
@@ -270,7 +341,7 @@ if __name__ == "__main__":
             check(f"{fname}: has ai_prompt", bool(ic.ai_prompt))
         check(f"{fname}: has path",  bool(ic.path))
         check(f"{fname}: has title", bool(ic.title) and ic.title != "(untitled)")
-        expected_auto = expected_severity in SEVERITIES_AUTO_APPLY and not expected_resolved
+        expected_auto = (expected_severity in SAFE_TYPES) and not expected_resolved
         check(f"{fname}: auto_applicable",
               ic.auto_applicable == expected_auto,
               f"got {ic.auto_applicable!r}")
