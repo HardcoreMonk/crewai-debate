@@ -67,7 +67,9 @@ cmd_boundary() {
   violations=$(comm -23 <(printf '%s\n' "$actual") <(printf '%s\n' "$planned"))
   if [ -n "$violations" ]; then
     echo "checks: plan boundary violated — files outside plan:" >&2
-    printf '  %s\n' $violations >&2
+    while IFS= read -r line; do
+      printf '  %s\n' "$line" >&2
+    done <<<"$violations"
     exit 3
   fi
 
