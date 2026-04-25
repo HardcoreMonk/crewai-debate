@@ -94,6 +94,34 @@ If the gate blocks but you're confident, bypass with `gh pr merge <n> --squash` 
 
 Zero-actionable PRs (CodeRabbit posts `"No actionable comments were generated"` as an issue comment without a formal review object) are now recognised by `review-wait` — synthetic `review_id=0, review_sha=""` records `actionable_count=0` and the phase completes (DESIGN §13.6 #10).
 
+**Known limitation (§13.6 #11, open).** `review-wait` does NOT yet recognise CodeRabbit's *nitpick-only* formal review objects — those open with `<details><summary>🧹 Nitpick comments (N)</summary>` and skip both the `**Actionable comments posted: N**` header and the zero-actionable phrase. Until fixed, such PRs hit `review-wait timed out after 600s`; bypass the same way (`gh pr merge`).
+
+## Re-running merge after `--dry-run`
+
+`merge --dry-run` evaluates the gate and marks the phase `completed` with `merge_sha=None, dry_run=True`. From PR #16 onward (DESIGN §13.6 #7-9), invoking `merge` *without* `--dry-run` on the same task is allowed — the dry-run completion is treated as re-runnable, and the real merge overwrites it. A real (non-dry) completion remains fatal-on-retry.
+
+## Rate-limit recovery (CodeRabbit free plan)
+
+If `review-wait` logs a `CodeRabbit rate-limit detected … deadline extended by 1800s` line (DESIGN §13.6 #7-8), the deadline has been pushed forward but no automatic retry is posted. The harness leaves PR-state changes to the operator:
+
+1. Wait for the rate-limit window to clear (CodeRabbit's comment usually states the wait minutes — typically ≤ 8 min on free plan).
+2. Manually post `@coderabbitai review` on the PR to re-trigger the bot.
+3. The next poll picks up the new review (the §13.6 #7-7 watermark prevents re-using the prior round's review).
+
+Auto-posting the retry was deliberately skipped in the #7-8 cut — false-positive risk on PR-state writes was judged disproportionate to the marginal benefit. If a future dogfood reproduces the friction often enough to invert that trade-off, raise `RATE_LIMIT_EXTENSION_SEC` or add the auto-post in a follow-up PR.
+
+## Stacked PR merge protocol
+
+Lessons from the 6-PR §13.6 merge cycle (DESIGN §11 dated log 2026-04-25 stack entry):
+
+- `gh pr merge --delete-branch` deletes the source branch on remote. Any open PR whose **base** was that branch gets auto-closed by GitHub (cannot be reopened with the original base, since it no longer exists).
+- Safe pattern when merging a stack:
+  1. Build the stack as usual (each PR's base is the previous branch).
+  2. As soon as the stack is up, retarget every child PR's base to `main` (`gh pr edit <num> --base main`). This locks each PR independent of branch deletions.
+  3. Merge in order. After each merge, locally `git fetch origin main && git rebase origin/main` on the next branch — duplicate squash-content commits get auto-skipped, so the branch ends up containing only its own delta.
+  4. `git push --force-with-lease` then `gh pr merge <next> --squash --delete-branch`.
+- An auto-closed PR can be replaced by a fresh `gh pr create --base main --head <branch>` once the branch is rebased onto main; the prior PR remains as a history record.
+
 ## Rotating commit author
 
 ```bash
