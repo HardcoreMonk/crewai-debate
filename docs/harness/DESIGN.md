@@ -531,14 +531,41 @@ Intent: `fix: cmd_merge accepts dry-run-completed phase to enable post-dry-run r
 **누적 학습**:
 - §13.6 #7-8 fix는 운영 가치 검증됨 — 첫 dogfood에서 즉시 발동
 - §13.6 #7-4 `--auto-commit` + #7-1 width detection은 ADR-0002 생성으로 동시 실증
-- 새 friction 2건(§13.6 #7-9 fixed in PR #16, §13.6 #11 open)
-- §13.6 #10 fix가 catch하지 못하는 **다른** review 포맷이 존재함을 확인
-- self-managed harness-merge는 이제 **사람 개입 1~2회** (rate-limit 시 manual `@coderabbitai`,
-  dry-run 후 #7-9 우회 — 후자는 PR #16 머지로 자동 제거됨)
+- 새 friction 2건 모두 closed: §13.6 #7-9 (PR #16), §13.6 #11 (PR #18)
+- §13.6 #10 fix가 catch하지 못하는 **다른** review 포맷이 존재함을 확인 → §13.6 #11으로 처리됨
+- self-managed harness-merge는 이제 **사람 개입 0~1회**: rate-limit 시에만 manual `@coderabbitai` 필요. dry-run lock-out은 PR #16에서, nitpick-only 포맷은 PR #18에서 자동 제거됨. 3회차 dogfood (§13.10 PR #18)는 zero-actionable 응답으로 **개입 0회 fully-autonomous 완주** 실증.
 
 **Timings**:
 - PR #15: 전체 wall-clock ~25분 (rate-limit 대기 ~10분 포함)
 - PR #16: 전체 wall-clock ~15분 (review-wait timeout까지)
+
+### 13.10 Self-managed full-chain dogfood — gen-3 (PR #18, 2026-04-25)
+
+목적: §13.6 #11 fix를 self-improving 사이클로 머지하면서 fix 자체가
+fix가 머지되기 전 단계에서도 **로컬 브랜치의 갱신된 parser를 통해**
+즉시 효과를 내는지(self-improvement coherence) 검증.
+
+**Intent**: `fix(harness/coderabbit): recognise nitpick-only formal review format` (§13.6 #11 본문 fix).
+
+| phase | 결과 | 비고 |
+|-------|------|------|
+| plan | 1회 | linter warnings 5건 모두 false-positive (fixture/test 파일명이 description 안에 등장) |
+| impl | 1회 | `coderabbit.py` `NITPICK_ONLY_RE` + `classify_review_body` fallback 분기 + fixture + 새 테스트 + RUNBOOK/DESIGN 동시 갱신 (plan.md::files에 docs도 포함) |
+| commit | 1회 | sha `7f360af` |
+| (adr) | 스킵 | plan에서 "parser extension은 ADR 불필요" 판단 |
+| pr-create | 1회 | PR #18 |
+| review-wait | 1회 | **§13.6 #10 fix가 catch** — CodeRabbit이 zero-actionable issue comment로 응답. NITPICK_ONLY_RE는 격발 안 됨 (CodeRabbit 응답 가변성 — 같은 종류 PR도 actionable 0/N, nitpick-only, rate-limit 등 5가지 패턴 중 하나) |
+| review-fetch | 1회 | 0 comments |
+| review-apply | 1회 | no-op |
+| review-reply | 1회 | 요약 코멘트 |
+| merge | dry-run + real | `--dry-run` → 실제 merge (§13.6 #7-9 fix가 같은 task에서 실 머지로 전이 허용). sha `0a7f79d` |
+
+**Verdict — 10/10 phase harness 완주, 운영자 개입 0회**. crewai self-host
+첫 fully-autonomous self-managed full-chain. CodeRabbit이 zero-actionable로
+응답하는 운 좋은 케이스이긴 했지만, 이는 **dogfood 결과 의존 없이 미리
+fix를 충분히 안착시켜 두면 가능**함을 실증한 의미 있는 선례.
+
+**Timings**: 전체 wall-clock ~10분 (LLM phase 4개 + git 작업 + CodeRabbit 응답 ~3분).
 
 ---
 
