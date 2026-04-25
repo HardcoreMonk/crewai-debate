@@ -309,6 +309,19 @@ def test_set_auto_bypass_pushed_marks_state(phase_module, tmp_path):
     assert s_reload["phases"]["review-wait"]["auto_bypass_manual_attempted"] is False
 
 
+def test_is_auto_bypass_manual_attempted_reads_flag(phase_module, tmp_path):
+    """Symmetric reader for the manual flag, mirroring `is_auto_bypass_pushed`.
+    Callers in cmd_review_wait read this in three places — the getter
+    centralises the access pattern instead of reaching into `rw`."""
+    phase, state_mod = phase_module
+    target_repo = tmp_path / "target"
+    target_repo.mkdir()
+    s = _seed_review_state(state_mod, "manual-getter", target_repo)
+    assert state_mod.is_auto_bypass_manual_attempted(s) is False
+    state_mod.set_auto_bypass_manual_attempted(s, comment_id=None)
+    assert state_mod.is_auto_bypass_manual_attempted(s) is True
+
+
 def test_is_auto_bypass_pushed_prefers_new_key(phase_module, tmp_path):
     """Regression: bump_round resets `auto_bypass_commit_pushed=False` for
     round 2. If a migrated state.json still carried `auto_bypass_pushed=True`,

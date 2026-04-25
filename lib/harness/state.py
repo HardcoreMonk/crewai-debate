@@ -305,6 +305,17 @@ def is_auto_bypass_pushed(state: dict[str, Any]) -> bool:
     return bool(rw.get("auto_bypass_pushed", False))
 
 
+def is_auto_bypass_manual_attempted(state: dict[str, Any]) -> bool:
+    """Read the manual `@coderabbitai review` post flag.
+
+    Symmetric with `is_auto_bypass_pushed` — callers shouldn't reach into
+    `state["phases"]["review-wait"]` directly to find out.
+    """
+    return bool(
+        state["phases"]["review-wait"].get("auto_bypass_manual_attempted", False)
+    )
+
+
 def set_auto_bypass_manual_attempted(
     state: dict[str, Any],
     *,

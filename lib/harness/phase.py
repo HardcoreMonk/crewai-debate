@@ -467,18 +467,13 @@ def ensure_clean_repo(repo: Path) -> None:
     harness could overwrite. impl/review-apply always commits its own
     changes, so leaving untracked files alone is safe.
 
-    `git status --porcelain` lines for tracked-but-modified files start with
-    M/A/D/R/C/U in either column; untracked entries start with `??`. We
-    drop the `??` lines and fatal-exit only if anything else remains.
+    Uses `--untracked-files=no` so git itself skips the untracked walk —
+    cheaper than materializing every untracked path and filtering in Python,
+    especially on repos with large `node_modules` / build-output trees.
     """
-    raw = git(repo, "status", "--porcelain").stdout
-    tracked_changes = [
-        line for line in raw.splitlines()
-        if line and not line.startswith("??")
-    ]
-    if tracked_changes:
-        joined = "\n".join(tracked_changes)
-        fatal(f"target repo not clean:\n{joined}\nCommit or stash before running impl.")
+    raw = git(repo, "status", "--porcelain", "--untracked-files=no").stdout.strip()
+    if raw:
+        fatal(f"target repo not clean:\n{raw}\nCommit or stash before running impl.")
 
 
 def _current_branch(repo: Path) -> str:
@@ -1209,7 +1204,11 @@ def _run_auto_bypass_commit_fallback(
         print(f"review-wait: {skip_msg}", file=sys.stderr)
         logf.write(f"poll {poll_count}: {skip_msg}\n")
         return
-    status_proc = git(target_repo, "status", "--porcelain")
+    # Mirror `ensure_clean_repo`'s definition of clean (§13.6 #16): untracked
+    # files don't disqualify the auto-bypass commit, since the marker file is
+    # the only diff we stage and any pre-existing untracked paths are
+    # operator-owned scratch.
+    status_proc = git(target_repo, "status", "--porcelain", "--untracked-files=no")
     dirty = status_proc.stdout.strip()
     if dirty:
         n_dirty = len([ln for ln in dirty.splitlines() if ln.strip()])
@@ -1401,8 +1400,7 @@ def cmd_review_wait(args) -> int:
                     # review` issue comment first, fall back to empty commit
                     # only when manual is declined / didn't surface a fresh
                     # review. Guarded by two single-shot booleans.
-                    rw = s["phases"]["review-wait"]
-                    manual_attempted = rw.get("auto_bypass_manual_attempted", False)
+                    manual_attempted = state.is_auto_bypass_manual_attempted(s)
                     commit_pushed = state.is_auto_bypass_pushed(s)
                     if auto_bypass_opt_in and not commit_pushed:
                         target_repo = Path(s["target_repo"])
@@ -1458,8 +1456,7 @@ def cmd_review_wait(args) -> int:
                     auto_bypass_opt_in
                     and coderabbit.is_incremental_decline_marker(body)
                 ):
-                    rw = s["phases"]["review-wait"]
-                    manual_attempted = rw.get("auto_bypass_manual_attempted", False)
+                    manual_attempted = state.is_auto_bypass_manual_attempted(s)
                     commit_pushed = state.is_auto_bypass_pushed(s)
                     if manual_attempted and not commit_pushed:
                         target_repo = Path(s["target_repo"])
@@ -1563,9 +1560,8 @@ def cmd_review_wait(args) -> int:
             getattr(args, "silent_ignore_recovery", False)
             or os.environ.get("HARNESS_SILENT_IGNORE_RECOVERY") == "1"
         )
-        rw = s["phases"]["review-wait"]
         any_auto_bypass = (
-            rw.get("auto_bypass_manual_attempted", False)
+            state.is_auto_bypass_manual_attempted(s)
             or state.is_auto_bypass_pushed(s)
         )
         if recovery_enabled and s.get("round", 1) == 1 and any_auto_bypass:
