@@ -798,5 +798,37 @@ auto = (not is_resolved) and (
 - [x] PR #25: cmd_plan + build_plan_prompt + state.init_state 완화 (110 tests)
 - [x] PR #26: planner 페르소나 갱신
 - [x] PR #27: crewai-debate-harness skill 신설
-- [ ] PR #28: 본 §15 + RUNBOOK 갱신 (this PR)
-- [ ] PR #29: gc.py `--older-than` validation re-run — Model A의 5/8 divergence가 0 또는 거의 0으로 떨어지는지 확인. 떨어지면 ADR-0003 효력 입증, 아니면 페르소나/prompt 조정 follow-up
+- [x] PR #28: 본 §15 + RUNBOOK 갱신
+- [x] PR #29: gc.py `--older-than` validation re-run — **Model A 5/8 divergence → Bridge 0/8 divergence** (§15.6 결과)
+
+### 15.6 검증 결과 — Model A → ADR-0003 Bridge (2026-04-25)
+
+동일한 토픽(`gc.py --older-than DAYS` 추가, 4 결정 포인트)을 **Model A 워크플로**(debate → 1-line intent → plan)와 **Bridge 워크플로**(debate → design.md sidecar → plan with injected context)로 각각 실행해 plan.md 출력을 비교.
+
+| 결정 포인트 | Debate FINAL_DRAFT | Model A plan.md | Bridge plan.md | Δ |
+|---|---|---|---|---|
+| `--older-than-days` 플래그 추가 | ✓ | ✓ | ✓ | A=B |
+| **Default 값** | None (explicit opt-in) | **14 days** | **None** | A≠B, **B match** |
+| **`--aggressive` 의미** | union mode (둘 중 하나라도 만족 못 하면 prune) | **mutex with `--older-than-days`** | **conservative AND default + aggressive union opt-in** | A≠B, **B match** |
+| **Conservative default 정의** | keep AND older-than (둘 다 만족하는 task만 보존) | mutex 구조라 적용 안 됨 | `prune = keep_excluded ∩ age_excluded` 명시 | A≠B, **B match** |
+| **시간 소스 우선순위** | `updated_at` → `finished_at` walk → mtime → preserve | `updated_at`만, fallback 없음 | **4-tier 그대로 + `_task_age_days(child, state_obj, now)` 헬퍼** | A≠B, **B match** |
+| **불량/누락 timestamp** | preserve + warning | `None` age = "young" (silent) | **preserve + stderr warning** (`no usable timestamp, preserving`) | A≠B, **B match** |
+| **시계 skew 처리** | ±24h normalize, 25h+ warning + fallback | 미처리 | **normalize on (now, now+24h], 24h 초과 → warning + fallback** | A≠B, **B match** |
+| 호환성 (state.json schema) | 변경 0 | 변경 0 | 변경 0 (`new key 없음`) | A=B |
+
+**Model A 정합도**: 3/8 (`--older-than-days` 추가, `--aggressive` 존재, schema 호환만 일치).
+**Bridge 정합도**: 8/8 (전 결정 포인트 매치).
+
+**PR #25의 stderr 알림이 운영에서 작동함을 함께 확인**:
+
+```
+plan: design.md sidecar detected (2416 chars) — injecting as approved design context (ADR-0003)
+```
+
+이 한 줄로 운영자는 plan이 조건부 모드인지 즉시 식별 가능.
+
+### 15.7 의의
+
+ADR-0003가 약속한 "5/8 divergence가 near-zero로 떨어진다"가 **0/8로 입증**됨. Bridge는 단순히 매칭률을 높이는 게 아니라 *operator-approved 결정이 silently 변경되지 않음*을 구조적으로 보장. 이후 dogfood에서 design.md sidecar의 운영 부담(작성 비용, refuse-on-overwrite 마찰)이 inversion되면 자동화 후속(예: ADR-0003-1 — bridge skill이 plan을 직접 chain) 등재 가능.
+
+§13.6의 friction 추적과 평행하게, ADR-0003 운영 중 발견되는 새 friction은 §15.8 이하로 등재.
