@@ -30,6 +30,7 @@ See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-
 - `lib/harness/tests/test_gh_gate.py` — `is_pr_mergeable` unit tests (10 cases covering §13.6 #8).
 - `lib/harness/tests/test_coderabbit_zero_actionable.py` — `classify_review_body` unit tests (7 cases covering §13.6 #10 zero-actionable detection + precedence).
 - `lib/harness/tests/test_state_review_watermark.py` — `seen_review_id_max` / `seen_issue_comment_id_max` watermark unit tests (11 cases covering §13.6 #7-7 cross-round staleness gate, monotone setter, `bump_round` preservation, legacy backward-compat).
+- `lib/harness/tests/test_design_sidecar.py` — ADR-0003 `design.md` sidecar injection unit tests (9 cases covering `build_plan_prompt` with/without approved-design block, `_read_design_sidecar` disk lookup, `init_state` tolerating pre-existing dir + design.md).
 - `lib/harness/tests/test_adr_commit_message.py` — `_build_adr_commit_message` unit tests (9 cases covering §13.6 #7-4 `adr --auto-commit` subject composition: ADR-prefix strip, width preservation, harness trailer).
 - `lib/harness/tests/test_plan_info_hygiene.py` — plan-info hygiene unit tests (17 cases covering §13.6 #7-6 HTML-comment strip, extraction-site integration for commit/PR/ADR, and §13.6 #7-5 `validate_plan_consistency` cross-check including unicode-ellipsis placeholder regression).
 - `lib/harness/tests/test_adr_width.py` — `_next_adr_number` width-resolution unit tests (11 cases covering §13.6 #7-1 `--adr-width` override + existing-convention authority; underscore-separator filename + max+1 vs count+1).
@@ -186,6 +187,7 @@ lib/
       test_gh_gate.py      # merge-gate unit tests (§13.6 #8)
       test_coderabbit_zero_actionable.py  # zero-actionable parser tests (§13.6 #10)
       test_state_review_watermark.py      # cross-round staleness watermark tests (§13.6 #7-7)
+      test_design_sidecar.py              # ADR-0003 sidecar injection tests (PR #25 step 1/5)
       test_adr_commit_message.py          # adr --auto-commit subject tests (§13.6 #7-4)
       test_plan_info_hygiene.py           # HTML-comment strip + plan linter (§13.6 #7-2/#7-5/#7-6)
       test_adr_width.py                   # _next_adr_number override / detection (§13.6 #7-1)
