@@ -465,7 +465,16 @@ def ensure_clean_repo(repo: Path) -> None:
 
 
 def _current_branch(repo: Path) -> str:
-    return git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    proc = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    if proc.returncode != 0:
+        fatal(
+            f"unable to determine current branch for {repo}: "
+            f"{(proc.stderr or '').strip() or 'git rev-parse failed'}"
+        )
+    branch = proc.stdout.strip()
+    if not branch:
+        fatal(f"git rev-parse returned an empty branch name for {repo}")
+    return branch
 
 
 def _require_feature_branch(repo: Path, *, phase: str) -> None:

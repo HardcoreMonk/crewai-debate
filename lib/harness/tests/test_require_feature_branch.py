@@ -91,3 +91,36 @@ def test_helper_used_by_pr_create_path(phase_mod, tmp_path, capsys):
         err = capsys.readouterr().err
         assert phase_name in err
         assert "harness/<slug>" in err
+
+
+def test_current_branch_fails_loudly_on_non_git_dir(phase_mod, tmp_path, capsys):
+    """Major review feedback (PR #54): `_current_branch` must not silently
+    return an empty string when `git rev-parse` exits non-zero — that path
+    used to fall through `branch in ("main", "master")` as harmless and
+    undermine fail-fast."""
+    not_a_repo = tmp_path / "plain"
+    not_a_repo.mkdir()
+    with pytest.raises(SystemExit) as ei:
+        phase_mod._current_branch(not_a_repo)
+    assert ei.value.code == 1
+    err = capsys.readouterr().err
+    assert "unable to determine current branch" in err
+
+
+def test_current_branch_fails_loudly_on_detached_head_with_empty_stdout(
+    phase_mod, tmp_path, monkeypatch, capsys
+):
+    """Cover the second failure mode: rev-parse exits 0 but stdout is empty
+    (rare in practice, but the helper guards it explicitly)."""
+    import subprocess as _sp
+
+    class _FakeProc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(phase_mod, "git", lambda *a, **kw: _FakeProc())
+    with pytest.raises(SystemExit):
+        phase_mod._current_branch(tmp_path)
+    err = capsys.readouterr().err
+    assert "empty branch name" in err
