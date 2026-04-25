@@ -1484,8 +1484,14 @@ def cmd_review_reply(args) -> int:
 def cmd_merge(args) -> int:
     s = _load_review_state_or_die(args.task_slug)
     _require_prev_phase_completed(s, "merge")
-    if s["phases"]["merge"]["status"] == state.STATUS_COMPLETED:
-        fatal("merge already completed")
+    merge_phase = s["phases"]["merge"]
+    if merge_phase["status"] == state.STATUS_COMPLETED:
+        # A prior dry-run completion left status=completed but merge_sha=None
+        # and dry_run=True; that case must remain re-runnable so the operator
+        # can perform the real merge after reviewing the gate report. Fatal
+        # only when the prior completion was a real merge.
+        if merge_phase.get("dry_run") is False or merge_phase.get("merge_sha"):
+            fatal("merge already completed")
 
     base_repo = s["base_repo"]
     pr_number = s["pr_number"]
