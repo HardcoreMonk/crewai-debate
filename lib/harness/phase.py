@@ -1535,6 +1535,52 @@ def cmd_review_wait(args) -> int:
 
         note = f"timed out after {PHASE_TIMEOUTS['review-wait']}s ({poll_count} polls)"
         state.finish_attempt(s, "review-wait", exit_code=124, note=note)
+
+        # §13.6 #13 fix candidate (c) — silent-ignore recovery.
+        # Trigger conditions: opt-in flag set, this is the first round (no prior
+        # recovery), and the auto-bypass marker was actually pushed (so the silent
+        # ignore is not just "operator never opted into auto-bypass"). When all
+        # match, close+reopen the PR to refresh CodeRabbit's already-reviewed
+        # cache, bump_round, and re-enter the polling loop once.
+        recovery_enabled = (
+            getattr(args, "silent_ignore_recovery", False)
+            or os.environ.get("HARNESS_SILENT_IGNORE_RECOVERY") == "1"
+        )
+        rw = s["phases"]["review-wait"]
+        marker_pushed = bool(
+            rw.get("auto_bypass_commit_pushed")
+            or rw.get("auto_bypass_pushed")  # legacy key
+        )
+        if recovery_enabled and s.get("round", 1) == 1 and marker_pushed:
+            print(
+                f"review-wait: silent-ignore recovery — close+reopen "
+                f"PR #{pr_number} (round 1 timed out, marker pushed; "
+                f"see DESIGN §13.6 #13)",
+                file=sys.stderr,
+            )
+            try:
+                gh.close_pr(base_repo, pr_number)
+                gh.reopen_pr(base_repo, pr_number)
+            except gh.GhError as e:
+                fail_note = (
+                    f"silent-ignore recovery failed: gh close+reopen raised: "
+                    f"{e}; falling back to original timeout"
+                )
+                print(f"review-wait: {fail_note}", file=sys.stderr)
+                state.set_phase_status(s, "review-wait", state.STATUS_FAILED)
+                fatal(note)
+            new_round = state.bump_round(s)
+            print(
+                f"review-wait: silent-ignore recovery — round bumped to "
+                f"{new_round}; re-polling",
+                file=sys.stderr,
+            )
+            # Re-enter cmd_review_wait once with the post-bump_round state.
+            # bump_round resets phase status to pending, so the recursive call
+            # sees a fresh phase slot. Recovery is single-shot because the
+            # `round == 1` guard prevents re-recovery on round 2 timeout.
+            return cmd_review_wait(args)
+
         state.set_phase_status(s, "review-wait", state.STATUS_FAILED)
         fatal(note)
     return 1  # unreachable
@@ -2044,6 +2090,21 @@ def main() -> int:
         help="review-wait: on CodeRabbit rate-limit, push an empty commit to "
              "trigger a fresh review (default: off). Env-var fallback: "
              "HARNESS_RATE_LIMIT_AUTO_BYPASS=1. See §13.6 #7-8.",
+    )
+    # review-wait — opt-in silent-ignore recovery (§13.6 #13 fix candidate (c)).
+    # When the auto-bypass marker has been pushed but CodeRabbit goes silent for
+    # the full review-wait deadline, automatically close+reopen the PR (refreshes
+    # the "already-reviewed" cache), bump_round the harness state, and re-enter
+    # the polling loop once. Off by default — closing/reopening is externally
+    # visible (PR changelog, watcher notifications). HARNESS_SILENT_IGNORE_RECOVERY=1
+    # is the env-var equivalent for callers that cannot pass CLI flags.
+    ap.add_argument(
+        "--silent-ignore-recovery", action="store_true", default=False,
+        help="review-wait: on silent-ignore timeout (deadline reached after "
+             "auto-bypass marker was pushed in round 1), close+reopen the PR, "
+             "bump_round, and re-poll once (default: off). Requires "
+             "--rate-limit-auto-bypass. Env-var fallback: "
+             "HARNESS_SILENT_IGNORE_RECOVERY=1. See §13.6 #13 fix candidate (c).",
     )
     ap.add_argument(
         "--impl-timeout", type=int, default=None,

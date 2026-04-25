@@ -207,6 +207,19 @@ def post_pr_comment(base_repo: str, pr_number: int, body: str) -> dict:
     return data
 
 
+def close_pr(base_repo: str, pr_number: int) -> None:
+    """Close a PR via `gh pr close`. Used by the §13.6 #13 (c) silent-ignore
+    recovery — the close+reopen pair refreshes CodeRabbit's "already-reviewed"
+    cache so the next round can elicit a real review on the existing marker SHA."""
+    _gh("pr", "close", str(pr_number), "--repo", base_repo, timeout=30)
+
+
+def reopen_pr(base_repo: str, pr_number: int) -> None:
+    """Reopen a previously-closed PR via `gh pr reopen`. Pair with `close_pr`
+    for the silent-ignore recovery path. Branch and commits are preserved."""
+    _gh("pr", "reopen", str(pr_number), "--repo", base_repo, timeout=30)
+
+
 def merge_pr(
     base_repo: str,
     pr_number: int,
