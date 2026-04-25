@@ -464,6 +464,19 @@ def ensure_clean_repo(repo: Path) -> None:
         fatal(f"target repo not clean:\n{st}\nCommit or stash before running impl.")
 
 
+def _current_branch(repo: Path) -> str:
+    return git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+
+
+def _require_feature_branch(repo: Path, *, phase: str) -> None:
+    branch = _current_branch(repo)
+    if branch in ("main", "master"):
+        fatal(
+            f"{phase}: refusing to run on {branch!r} — checkout a feature branch first "
+            f"(e.g. `git checkout -b harness/<slug>`); see DESIGN §13.6 #14."
+        )
+
+
 _HARNESS_TRAILER = "Co-Authored-By: crewai-harness <harness-mvp@local>"
 
 
@@ -514,6 +527,7 @@ def cmd_plan(args) -> int:
     target_repo = Path(args.target_repo).resolve()
     if not (target_repo / ".git").exists():
         fatal(f"target repo is not a git repo: {target_repo}")
+    _require_feature_branch(target_repo, phase="plan")
 
     try:
         s = state.init_state(args.task_slug, args.intent, str(target_repo))
@@ -620,6 +634,7 @@ def cmd_impl(args) -> int:
         fatal("impl already completed for this task")
 
     target_repo = Path(s["target_repo"])
+    _require_feature_branch(target_repo, phase="impl")
     plan_path = Path(s["phases"]["plan"]["final_output_path"])
     plan_text = plan_path.read_text()
     tests_cmd = extract_tests_command(plan_text)
@@ -977,9 +992,8 @@ def cmd_pr_create(args) -> int:
     title = extract_commit_title(plan_text, args.task_slug)
     body = _build_pr_body(plan_text, s)
 
-    branch = git(target_repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-    if branch in ("main", "master"):
-        fatal(f"refusing to open PR from {branch!r} — checkout a feature branch first")
+    _require_feature_branch(target_repo, phase="pr-create")
+    branch = _current_branch(target_repo)
     base = args.base or "main"
 
     attempt = state.start_attempt(s, "pr-create")
