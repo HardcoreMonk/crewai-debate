@@ -36,6 +36,14 @@ WALKTHROUGH_START = re.compile(r"<!--\s*walkthrough_start\s*-->", re.IGNORECASE)
 # "rate limit hit" / "rate-limited" / "Please try again". Permissive match
 # on the canonical noun phrase so light copy changes don't break the gate.
 RATE_LIMIT_RE = re.compile(r"\brate[\s-]*limit(?:ed)?\b", re.IGNORECASE)
+# Hybrid auto-bypass (§13.6 #7-8 follow-up B3-2). When CodeRabbit declines a
+# manually-requested re-review with phrasing like "incremental review system"
+# or "already reviewed commits", treat it as a signal to fall back to the
+# empty-commit bypass. OR semantics — either phrase alone suffices.
+INCREMENTAL_DECLINE_RE = re.compile(
+    r"\bincremental review system\b|\balready reviewed commits\b",
+    re.IGNORECASE,
+)
 
 # Resolution tracking — CodeRabbit edits prior comments with this marker after an autofix.
 RESOLVED_RE = re.compile(r"✅\s*Addressed in commit\s+([0-9a-f]{7,40})", re.IGNORECASE)
@@ -186,6 +194,21 @@ def is_rate_limit_marker(body: str) -> bool:
     if not body:
         return False
     return bool(RATE_LIMIT_RE.search(body))
+
+
+def is_incremental_decline_marker(body: str) -> bool:
+    """Detect a CodeRabbit "incremental review declined" notification.
+
+    When the harness manually posts `@coderabbitai review` to bypass a
+    rate-limit, CodeRabbit may decline with phrasing like
+    "incremental review system" or "already reviewed commits". The hybrid
+    auto-bypass treats this as the signal to fall back to the empty-commit
+    push. OR semantics — either phrase alone suffices, so light copy churn
+    does not silently disable the signal. See DESIGN §13.6 #7-8 follow-up.
+    """
+    if not body:
+        return False
+    return bool(INCREMENTAL_DECLINE_RE.search(body))
 
 
 # ---- inline comment parsing ----

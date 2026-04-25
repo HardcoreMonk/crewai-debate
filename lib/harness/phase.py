@@ -1071,6 +1071,88 @@ def _extract_head_branch_from_pr(pr: dict) -> str:
     return pr.get("headRefName") or ""
 
 
+def _run_auto_bypass_commit_fallback(
+    s: dict,
+    pr: dict,
+    target_repo: Path,
+    branch: str,
+    logf,
+    poll_count: int,
+) -> None:
+    """Empty-commit auto-bypass ladder: dirty check → empty commit → push.
+
+    Idempotent fallback used by the hybrid auto-bypass dispatch in
+    `cmd_review_wait` (DESIGN §13.6 #7-8 follow-up). On any failure
+    (head_branch unresolvable, dirty tree, commit non-zero, push non-zero)
+    the function logs to both stderr and `logf` and returns without
+    mutating state. On push failure the local commit is hard-reset
+    (HEAD~1) so a later successful push from review-apply does not
+    silently publish this stale bypass commit. On success the new key
+    `auto_bypass_commit_pushed` is persisted via
+    `state.set_auto_bypass_pushed`.
+    """
+    if not branch:
+        skip_msg = (
+            f"auto-bypass skipped: head_branch unresolvable "
+            f"for target_repo={target_repo} "
+            f"(pr={s['base_repo']}#{s['pr_number']}); falling back "
+            f"to deadline extension only"
+        )
+        print(f"review-wait: {skip_msg}", file=sys.stderr)
+        logf.write(f"poll {poll_count}: {skip_msg}\n")
+        return
+    status_proc = git(target_repo, "status", "--porcelain")
+    dirty = status_proc.stdout.strip()
+    if dirty:
+        n_dirty = len([ln for ln in dirty.splitlines() if ln.strip()])
+        skip_msg = (
+            f"auto-bypass skipped: target repo is dirty "
+            f"({n_dirty} uncommitted changes), falling back "
+            f"to deadline extension only"
+        )
+        print(f"review-wait: {skip_msg}", file=sys.stderr)
+        logf.write(f"poll {poll_count}: {skip_msg}\n")
+        return
+    commit_proc = _git_commit_with_author(
+        target_repo,
+        "harness: trigger CodeRabbit re-review "
+        "(§13.6 #7-8 auto-bypass) [B3-1b auto-bypass]",
+        allow_empty=True,
+    )
+    if commit_proc.returncode != 0:
+        fail_msg = (
+            f"auto-bypass commit failed (exit="
+            f"{commit_proc.returncode}): "
+            f"{(commit_proc.stderr or '').strip()[-200:]}; "
+            f"falling back to deadline extension only"
+        )
+        print(f"review-wait: {fail_msg}", file=sys.stderr)
+        logf.write(f"poll {poll_count}: {fail_msg}\n")
+        return
+    new_sha = git(target_repo, "rev-parse", "HEAD").stdout.strip()
+    push = push_branch_via_gh_token(target_repo, branch)
+    if push.returncode != 0:
+        git(target_repo, "reset", "--hard", "HEAD~1")
+        push_tail = (push.stderr or "").strip()[-200:]
+        fail_msg = (
+            f"auto-bypass push failed (exit="
+            f"{push.returncode}): {push_tail}; "
+            f"local empty commit reverted; "
+            f"falling back to deadline extension only"
+        )
+        print(f"review-wait: {fail_msg}", file=sys.stderr)
+        logf.write(f"poll {poll_count}: {fail_msg}\n")
+        return
+    ok_msg = (
+        f"auto-bypass — pushed empty commit "
+        f"{new_sha} to {branch}; CodeRabbit "
+        f"will fresh-review on new SHA"
+    )
+    print(f"review-wait: {ok_msg}", file=sys.stderr)
+    logf.write(f"poll {poll_count}: auto_bypass: pushed={new_sha}\n")
+    state.set_auto_bypass_pushed(s)
+
+
 # ---- review-wait ----
 
 
@@ -1126,6 +1208,12 @@ def cmd_review_wait(args) -> int:
     seen_issue_max = int(s.get("seen_issue_comment_id_max") or 0)
 
     rate_limit_extended = False  # §13.6 #7-8 — at-most-once deadline bump
+    # Hybrid auto-bypass opt-in (§13.6 #7-8 follow-up B3-2). Resolved once;
+    # neither argparse nor env vars change mid-call.
+    auto_bypass_opt_in = (
+        getattr(args, "rate_limit_auto_bypass", False)
+        or os.environ.get("HARNESS_RATE_LIMIT_AUTO_BYPASS") == "1"
+    )
 
     with log.open("w") as logf:
         logf.write(
@@ -1194,113 +1282,92 @@ def cmd_review_wait(args) -> int:
                     )
                     print(f"review-wait: {note}", file=sys.stderr)
                     logf.write(f"poll {poll_count}: {note}\n")
-                    # §13.6 #7-8 follow-up B3-1b — opt-in auto-bypass.
-                    # When the operator opted in, push an empty commit so
-                    # CodeRabbit re-reviews on a fresh SHA. Guarded so we
-                    # never push twice in one invocation. Failures (dirty
-                    # tree or push exit != 0) degrade gracefully to the
-                    # deadline-only fallback already applied above.
-                    auto_bypass_opt_in = (
-                        getattr(args, "rate_limit_auto_bypass", False)
-                        or os.environ.get("HARNESS_RATE_LIMIT_AUTO_BYPASS") == "1"
+                    # §13.6 #7-8 hybrid auto-bypass (B3-1d): try `@coderabbitai
+                    # review` issue comment first, fall back to empty commit
+                    # only when manual is declined / didn't surface a fresh
+                    # review. Guarded by two single-shot booleans.
+                    rw = s["phases"]["review-wait"]
+                    manual_attempted = rw.get("auto_bypass_manual_attempted", False)
+                    commit_pushed = (
+                        rw.get("auto_bypass_commit_pushed", False)
+                        or rw.get("auto_bypass_pushed", False)  # legacy key
                     )
-                    already_pushed = s["phases"]["review-wait"].get(
-                        "auto_bypass_pushed", False
-                    )
-                    if auto_bypass_opt_in and not already_pushed:
+                    if auto_bypass_opt_in and not commit_pushed:
                         target_repo = Path(s["target_repo"])
-                        # Guard against empty refspec: a missing head_branch
-                        # would make `git push origin :` push *all* matching
-                        # refs, which is destructive and confusing. Fall back
-                        # to the PR object captured pre-loop, then degrade to
-                        # the deadline-only path with a clear log line.
                         branch = (
                             s.get("head_branch")
                             or _extract_head_branch_from_pr(pr)
                         )
-                        if not branch:
-                            skip_msg = (
-                                f"auto-bypass skipped: head_branch unresolvable "
-                                f"for target_repo={target_repo} "
-                                f"(pr={base_repo}#{pr_number}); falling back "
-                                f"to deadline extension only"
-                            )
-                            print(f"review-wait: {skip_msg}", file=sys.stderr)
-                            logf.write(f"poll {poll_count}: {skip_msg}\n")
+                        if not manual_attempted:
+                            # Stage 1: cheap manual `@coderabbitai review` post
+                            try:
+                                posted = gh.post_pr_comment(
+                                    base_repo, pr_number, "@coderabbitai review",
+                                )
+                                state.set_auto_bypass_manual_attempted(
+                                    s, comment_id=int(posted.get("id") or 0),
+                                )
+                                ok_msg = (
+                                    f"auto-bypass — posted @coderabbitai review "
+                                    f"(comment {posted.get('id')}); awaiting "
+                                    f"fresh review or decline"
+                                )
+                                print(f"review-wait: {ok_msg}", file=sys.stderr)
+                                logf.write(f"poll {poll_count}: {ok_msg}\n")
+                            except gh.GhError as e:
+                                err_msg = (
+                                    f"auto-bypass manual post failed: {e}; "
+                                    f"falling back to empty commit immediately"
+                                )
+                                print(f"review-wait: {err_msg}", file=sys.stderr)
+                                logf.write(f"poll {poll_count}: {err_msg}\n")
+                                _run_auto_bypass_commit_fallback(
+                                    s, pr, target_repo, branch, logf, poll_count,
+                                )
                         else:
-                            status_proc = git(target_repo, "status", "--porcelain")
-                            dirty = status_proc.stdout.strip()
-                            if dirty:
-                                n_dirty = len([ln for ln in dirty.splitlines() if ln.strip()])
-                                skip_msg = (
-                                    f"auto-bypass skipped: target repo is dirty "
-                                    f"({n_dirty} uncommitted changes), falling back "
-                                    f"to deadline extension only"
-                                )
-                                print(f"review-wait: {skip_msg}", file=sys.stderr)
-                                logf.write(f"poll {poll_count}: {skip_msg}\n")
-                            else:
-                                commit_proc = _git_commit_with_author(
-                                    target_repo,
-                                    "harness: trigger CodeRabbit re-review "
-                                    "(§13.6 #7-8 auto-bypass) [B3-1b auto-bypass]",
-                                    allow_empty=True,
-                                )
-                                if commit_proc.returncode != 0:
-                                    fail_msg = (
-                                        f"auto-bypass commit failed (exit="
-                                        f"{commit_proc.returncode}): "
-                                        f"{(commit_proc.stderr or '').strip()[-200:]}; "
-                                        f"falling back to deadline extension only"
-                                    )
-                                    print(
-                                        f"review-wait: {fail_msg}",
-                                        file=sys.stderr,
-                                    )
-                                    logf.write(f"poll {poll_count}: {fail_msg}\n")
-                                else:
-                                    new_sha = git(
-                                        target_repo, "rev-parse", "HEAD",
-                                    ).stdout.strip()
-                                    push = push_branch_via_gh_token(target_repo, branch)
-                                    if push.returncode != 0:
-                                        # Undo the local empty commit so a later
-                                        # successful push from review-apply does
-                                        # not silently publish this stale bypass
-                                        # commit. Hard reset is safe here — the
-                                        # only commit at HEAD is the one we just
-                                        # created in this very block.
-                                        git(target_repo, "reset", "--hard", "HEAD~1")
-                                        push_tail = (push.stderr or "").strip()[-200:]
-                                        fail_msg = (
-                                            f"auto-bypass push failed (exit="
-                                            f"{push.returncode}): {push_tail}; "
-                                            f"local empty commit reverted; "
-                                            f"falling back to deadline extension only"
-                                        )
-                                        print(
-                                            f"review-wait: {fail_msg}",
-                                            file=sys.stderr,
-                                        )
-                                        logf.write(f"poll {poll_count}: {fail_msg}\n")
-                                    else:
-                                        ok_msg = (
-                                            f"auto-bypass — pushed empty commit "
-                                            f"{new_sha} to {branch}; CodeRabbit "
-                                            f"will fresh-review on new SHA"
-                                        )
-                                        print(
-                                            f"review-wait: {ok_msg}",
-                                            file=sys.stderr,
-                                        )
-                                        logf.write(
-                                            f"poll {poll_count}: auto_bypass: "
-                                            f"pushed={new_sha}\n"
-                                        )
-                                        s["phases"]["review-wait"][
-                                            "auto_bypass_pushed"
-                                        ] = True
-                                        state.save_state(s)
+                            # Stage 2: manual was already posted but rate-limit
+                            # comment reappeared — manual didn't produce a
+                            # fresh review. Empty commit fallback now.
+                            note2 = (
+                                f"auto-bypass — manual review didn't produce "
+                                f"fresh review after rate-limit re-detected "
+                                f"(issue #{ic_id}); falling back to empty commit"
+                            )
+                            print(f"review-wait: {note2}", file=sys.stderr)
+                            logf.write(f"poll {poll_count}: {note2}\n")
+                            _run_auto_bypass_commit_fallback(
+                                s, pr, target_repo, branch, logf, poll_count,
+                            )
+                # B3-1d decline detection — independent of rate-limit branch.
+                # If the operator's manual review was declined by CodeRabbit's
+                # incremental-review system, fall back to empty commit
+                # immediately rather than wait for another rate-limit poll.
+                if (
+                    auto_bypass_opt_in
+                    and coderabbit.is_incremental_decline_marker(body)
+                ):
+                    rw = s["phases"]["review-wait"]
+                    manual_attempted = rw.get("auto_bypass_manual_attempted", False)
+                    commit_pushed = (
+                        rw.get("auto_bypass_commit_pushed", False)
+                        or rw.get("auto_bypass_pushed", False)  # legacy
+                    )
+                    if manual_attempted and not commit_pushed:
+                        target_repo = Path(s["target_repo"])
+                        branch = (
+                            s.get("head_branch")
+                            or _extract_head_branch_from_pr(pr)
+                        )
+                        decline_note = (
+                            f"auto-bypass — manual review declined "
+                            f"(incremental-system, comment #{ic_id}); "
+                            f"falling back to empty commit"
+                        )
+                        print(f"review-wait: {decline_note}", file=sys.stderr)
+                        logf.write(f"poll {poll_count}: {decline_note}\n")
+                        _run_auto_bypass_commit_fallback(
+                            s, pr, target_repo, branch, logf, poll_count,
+                        )
                 sig = coderabbit.classify_review_body(body)
                 if sig.kind in ("skipped", "failed", "complete"):
                     if issue_sig is None or (ic.get("created_at") or "") > (getattr(issue_sig, "submitted_at", "") or ""):

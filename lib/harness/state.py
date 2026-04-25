@@ -153,7 +153,8 @@ def init_review_state(
             "review-wait": {
                 "status": STATUS_PENDING, "attempts": [],
                 "review_id": None, "review_sha": None, "actionable_count": None,
-                "auto_bypass_pushed": False,
+                "auto_bypass_manual_attempted": False,
+                "auto_bypass_commit_pushed": False,
             },
             "review-fetch": {
                 "status": STATUS_PENDING, "attempts": [],
@@ -272,6 +273,35 @@ def set_review_metadata(
     save_state(state)
 
 
+def set_auto_bypass_pushed(state: dict[str, Any]) -> None:
+    """Mark the empty-commit auto-bypass as pushed for this round.
+
+    Writes to the new key `auto_bypass_commit_pushed`. Legacy state.json
+    files written before the hybrid split (containing only the older
+    `auto_bypass_pushed` key) are read via a chained `.get` fallback at
+    every read site for one release; new writes use only the new key.
+    See DESIGN §13.6 #7-8 follow-up.
+    """
+    state["phases"]["review-wait"]["auto_bypass_commit_pushed"] = True
+    save_state(state)
+
+
+def set_auto_bypass_manual_attempted(
+    state: dict[str, Any],
+    *,
+    comment_id: int | None,
+) -> None:
+    """Mark the manual `@coderabbitai review` post as attempted for this round.
+
+    `comment_id` is accepted for symmetry with future logging/audit needs and
+    is not currently persisted as its own field — the caller logs the id
+    immediately. See DESIGN §13.6 #7-8 follow-up.
+    """
+    _ = comment_id
+    state["phases"]["review-wait"]["auto_bypass_manual_attempted"] = True
+    save_state(state)
+
+
 def set_seen_review_id_max(state: dict[str, Any], *, review_id: int) -> None:
     """Record the highest formal-review id consumed by review-wait. Monotone:
     a smaller value never overwrites. Survives bump_round (§13.6 #7-7)."""
@@ -336,7 +366,8 @@ def bump_round(state: dict[str, Any]) -> int:
     state["phases"]["review-wait"].update({
         "status": STATUS_PENDING, "attempts": [],
         "review_id": None, "review_sha": None, "actionable_count": None,
-        "auto_bypass_pushed": False,
+        "auto_bypass_manual_attempted": False,
+        "auto_bypass_commit_pushed": False,
     })
     state["phases"]["review-fetch"].update({
         "status": STATUS_PENDING, "attempts": [],

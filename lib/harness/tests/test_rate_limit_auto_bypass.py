@@ -191,7 +191,7 @@ def test_flag_on_clean_tree_pushes_empty_commit(env, monkeypatch):
     assert "[B3-1b auto-bypass]" in head_msg
 
     s = state_mod.load_state("ab-on")
-    assert s["phases"]["review-wait"]["auto_bypass_pushed"] is True
+    assert s["phases"]["review-wait"]["auto_bypass_commit_pushed"] is True
 
 
 # ---- (3) flag on + dirty tree → skip with log message ----
@@ -221,10 +221,10 @@ def test_flag_on_dirty_tree_skips(env, monkeypatch, capsys):
     assert "auto-bypass skipped: target repo is dirty" in err
 
     s = state_mod.load_state("ab-dirty")
-    assert s["phases"]["review-wait"]["auto_bypass_pushed"] is False
+    assert s["phases"]["review-wait"]["auto_bypass_commit_pushed"] is False
 
 
-# ---- (4) flag on + state pre-seeded auto_bypass_pushed=True → no-op ----
+# ---- (4) flag on + state pre-seeded auto_bypass_commit_pushed=True → no-op ----
 
 
 def test_flag_on_already_pushed_no_op(env, monkeypatch):
@@ -237,7 +237,7 @@ def test_flag_on_already_pushed_no_op(env, monkeypatch):
     s = state_mod.init_review_state(
         "ab-already", base_repo="o/r", pr_number=42, target_repo=str(repo),
     )
-    s["phases"]["review-wait"]["auto_bypass_pushed"] = True
+    s["phases"]["review-wait"]["auto_bypass_commit_pushed"] = True
     state_mod.save_state(s)
 
     push_calls = []
@@ -282,7 +282,7 @@ def test_flag_on_push_failure_falls_back(env, monkeypatch, capsys):
     assert "deadline extended by" in err
 
     s = state_mod.load_state("ab-pushfail")
-    assert s["phases"]["review-wait"]["auto_bypass_pushed"] is False
+    assert s["phases"]["review-wait"]["auto_bypass_commit_pushed"] is False
 
 
 # ---- (6) env-var fallback activates auto-bypass ----
@@ -310,4 +310,4 @@ def test_env_var_fallback_activates(env, monkeypatch):
     assert len(push_calls) == 1
 
     s = state_mod.load_state("ab-env")
-    assert s["phases"]["review-wait"]["auto_bypass_pushed"] is True
+    assert s["phases"]["review-wait"]["auto_bypass_commit_pushed"] is True
