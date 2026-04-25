@@ -32,32 +32,7 @@ _spec.loader.exec_module(cr)
 
 # Real-shaped body from PR #30 (DESIGN §13.6 #12 forcing function), trimmed
 # but preserving every load-bearing tag, character, and emoji.
-PR30_NITPICK_BODY = dedent("""\
-
-<details>
-<summary>🧹 Nitpick comments (1)</summary><blockquote>
-
-<details>
-<summary>lib/harness/tests/test_merge_dry_run_rerun.py (1)</summary><blockquote>
-
-`62-70`: **Consider asserting `merge_pr` is invoked exactly once.**
-
-This would harden the test against regressions where a second invocation accidentally reaches GitHub merge logic before failing.
-
-
-<details>
-<summary>♻️ Proposed cleanup</summary>
-
-```diff
--def _install_gh_mocks(phase, monkeypatch, *, merge_sha: str = "abc123def456") -> None:
-+def _install_gh_mocks(phase, monkeypatch, *, merge_sha: str = "abc123def456") -> dict:
-```
-</details>
-
-</blockquote></details>
-
-</blockquote></details>
-""")
+PR30_NITPICK_BODY = (_LIB / "fixtures" / "coderabbit" / "review_pr30_nitpick_body.md").read_text()
 
 
 # Two-file shape: tests both a code file and a docs file in one wrapper.
