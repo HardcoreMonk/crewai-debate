@@ -336,6 +336,7 @@ def bump_round(state: dict[str, Any]) -> int:
     state["phases"]["review-wait"].update({
         "status": STATUS_PENDING, "attempts": [],
         "review_id": None, "review_sha": None, "actionable_count": None,
+        "auto_bypass_pushed": False,
     })
     state["phases"]["review-fetch"].update({
         "status": STATUS_PENDING, "attempts": [],
