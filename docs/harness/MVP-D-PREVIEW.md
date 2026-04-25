@@ -60,7 +60,11 @@ Skip/fail 케이스: `<!-- ... skip review by coderabbit.ai -->` 또는 `<!-- ..
 
 > ✅ **2026-04-25 해결 (DESIGN §13.6 #10)**: CodeRabbit이 actionable 0건인 PR에 대해서는 *formal review 객체를 만들지 않고* `"No actionable comments were generated in the recent review. 🎉"` 라는 issue comment만 포스트. `coderabbit.py`에 `NO_ACTIONABLE_RE` 추가로 `classify_review_body`가 이를 `kind=complete, actionable_count=0`으로 인식하며, `cmd_review_wait`의 issue-comment 분기가 synthetic `review_id=0, review_sha=""`로 phase를 완료시킨다.
 
-> ⏳ **2026-04-25 등재 — open (DESIGN §13.6 #11)**: 위 §10과 별개로, **nitpick-only formal review** 케이스가 따로 존재한다. CodeRabbit이 actionable 0건이지만 nitpick suggestion이 있는 PR에 대해서는 issue comment가 아닌 **review 객체 자체**를 게시하되, body가 `**Actionable comments posted: N**` 헤더와 `"No actionable comments were generated"` 둘 다 없이 `<details><summary>🧹 Nitpick comments (N)</summary>` 부터 시작한다. `classify_review_body`는 현재 이 케이스에 `kind=none`을 반환해 `cmd_review_wait`이 600s 타임아웃까지 대기. PR #16 검증 중 직접 격발해 OOB로 우회. Fix 후보: `coderabbit.py`에 `NITPICK_HEADER_RE` 추가 + 매치 시 `kind=complete`로 분류 (actionable_count 의미는 디자인 결정 필요).
+> ✅ **2026-04-25 해결 (DESIGN §13.6 #11, PR #18)**: 위 §10과 별개로 존재했던 **nitpick-only formal review** 케이스 (CodeRabbit이 actionable 0건이지만 nitpick suggestion이 있는 PR에 대해 `<details><summary>🧹 Nitpick comments (N)</summary>` 부터 시작하는 review 객체 게시). `coderabbit.py::NITPICK_ONLY_RE` 추가로 `classify_review_body`가 `kind=complete, actionable_count=N`으로 인식. `cmd_review_wait`은 기존 `complete` 경로 그대로 사용.
+
+> ✅ **2026-04-25 해결 (DESIGN §13.6 #12, PR #35)**: 위 §11의 sub-case — actionable_count > 0인데 inline-comments endpoint에 0건이고 suggestion이 review body 안의 `<details>` 블록으로 embedded된 경우. `coderabbit.extract_body_embedded_inlines(review_body)`가 `<blockquote>` depth 카운팅으로 nested 블록을 균형 매칭해 synthesized inline comment dict 반환. `cmd_review_fetch`가 `actionable_count > len(bot_comments)`일 때 자동 폴백 호출.
+
+> ⏳ **2026-04-25 등재 — open (DESIGN §13.6 #13, PR #45 dogfood 발견 / PR #47 부분 fix)**: B3-1d auto-bypass의 empty commit이 fresh SHA임에도 CodeRabbit이 silent ignore하는 케이스. PR #47에서 empty commit → `.harness/auto-bypass-marker.md` timestamped marker 파일 commit으로 교체해 "no diff" filter 우회 시도. Runtime 효과 측정은 다음 dogfood에서 자연스럽게 확인.
 
 **Inline 코멘트 템플릿**:
 ```
