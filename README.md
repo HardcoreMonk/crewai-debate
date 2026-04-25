@@ -32,6 +32,7 @@ See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-
 - `lib/harness/tests/test_state_review_watermark.py` — `seen_review_id_max` / `seen_issue_comment_id_max` watermark unit tests (11 cases covering §13.6 #7-7 cross-round staleness gate, monotone setter, `bump_round` preservation, legacy backward-compat).
 - `lib/harness/tests/test_adr_commit_message.py` — `_build_adr_commit_message` unit tests (9 cases covering §13.6 #7-4 `adr --auto-commit` subject composition: ADR-prefix strip, width preservation, harness trailer).
 - `lib/harness/tests/test_plan_info_hygiene.py` — plan-info hygiene unit tests (17 cases covering §13.6 #7-6 HTML-comment strip, extraction-site integration for commit/PR/ADR, and §13.6 #7-5 `validate_plan_consistency` cross-check including unicode-ellipsis placeholder regression).
+- `lib/harness/tests/test_adr_width.py` — `_next_adr_number` width-resolution unit tests (11 cases covering §13.6 #7-1 `--adr-width` override + existing-convention authority; underscore-separator filename + max+1 vs count+1).
 - `lib/harness/fixtures/coderabbit/*.json` — reference CodeRabbit payloads for parser self-test.
 
 ## Harness — getting started
@@ -47,6 +48,7 @@ python3 lib/harness/phase.py impl      add-feature-X
 python3 lib/harness/phase.py commit    add-feature-X
 python3 lib/harness/phase.py adr       add-feature-X          # optional: generate ADR file
 python3 lib/harness/phase.py adr       add-feature-X --auto-commit  # …or fold the ADR into the same branch
+python3 lib/harness/phase.py adr       add-feature-X --adr-width 3  # …first ADR in an empty docs/adr/, force 3-digit width
 python3 lib/harness/phase.py pr-create add-feature-X          # optional: push + open PR
 ```
 
@@ -176,6 +178,7 @@ lib/
       test_state_review_watermark.py      # cross-round staleness watermark tests (§13.6 #7-7)
       test_adr_commit_message.py          # adr --auto-commit subject tests (§13.6 #7-4)
       test_plan_info_hygiene.py           # HTML-comment strip + plan linter (§13.6 #7-2/#7-5/#7-6)
+      test_adr_width.py                   # _next_adr_number override / detection (§13.6 #7-1)
 docs/
   adr/                     # Architecture Decision Records (2026-04-25)
     README.md              # ADR convention + index
