@@ -477,13 +477,17 @@ def _current_branch(repo: Path) -> str:
     return branch
 
 
-def _require_feature_branch(repo: Path, *, phase: str) -> None:
+def _require_feature_branch(repo: Path, *, phase: str) -> str:
+    """Return the current branch after asserting it is not a protected one.
+    Callers that need the branch name afterward should reuse the return
+    value rather than re-running `git rev-parse`."""
     branch = _current_branch(repo)
-    if branch in ("main", "master"):
+    if branch in state.PROTECTED_BRANCHES:
         fatal(
             f"{phase}: refusing to run on {branch!r} — checkout a feature branch first "
             f"(e.g. `git checkout -b harness/<slug>`); see DESIGN §13.6 #14."
         )
+    return branch
 
 
 _HARNESS_TRAILER = "Co-Authored-By: crewai-harness <harness-mvp@local>"
@@ -1001,8 +1005,7 @@ def cmd_pr_create(args) -> int:
     title = extract_commit_title(plan_text, args.task_slug)
     body = _build_pr_body(plan_text, s)
 
-    _require_feature_branch(target_repo, phase="pr-create")
-    branch = _current_branch(target_repo)
+    branch = _require_feature_branch(target_repo, phase="pr-create")
     base = args.base or "main"
 
     attempt = state.start_attempt(s, "pr-create")
@@ -1383,10 +1386,7 @@ def cmd_review_wait(args) -> int:
                     # review. Guarded by two single-shot booleans.
                     rw = s["phases"]["review-wait"]
                     manual_attempted = rw.get("auto_bypass_manual_attempted", False)
-                    commit_pushed = (
-                        rw.get("auto_bypass_commit_pushed", False)
-                        or rw.get("auto_bypass_pushed", False)  # legacy key
-                    )
+                    commit_pushed = state.is_auto_bypass_pushed(s)
                     if auto_bypass_opt_in and not commit_pushed:
                         target_repo = Path(s["target_repo"])
                         branch = (
@@ -1443,10 +1443,7 @@ def cmd_review_wait(args) -> int:
                 ):
                     rw = s["phases"]["review-wait"]
                     manual_attempted = rw.get("auto_bypass_manual_attempted", False)
-                    commit_pushed = (
-                        rw.get("auto_bypass_commit_pushed", False)
-                        or rw.get("auto_bypass_pushed", False)  # legacy
-                    )
+                    commit_pushed = state.is_auto_bypass_pushed(s)
                     if manual_attempted and not commit_pushed:
                         target_repo = Path(s["target_repo"])
                         branch = (
@@ -1546,12 +1543,7 @@ def cmd_review_wait(args) -> int:
             getattr(args, "silent_ignore_recovery", False)
             or os.environ.get("HARNESS_SILENT_IGNORE_RECOVERY") == "1"
         )
-        rw = s["phases"]["review-wait"]
-        marker_pushed = bool(
-            rw.get("auto_bypass_commit_pushed")
-            or rw.get("auto_bypass_pushed")  # legacy key
-        )
-        if recovery_enabled and s.get("round", 1) == 1 and marker_pushed:
+        if recovery_enabled and s.get("round", 1) == 1 and state.is_auto_bypass_pushed(s):
             print(
                 f"review-wait: silent-ignore recovery — close+reopen "
                 f"PR #{pr_number} (round 1 timed out, marker pushed; "

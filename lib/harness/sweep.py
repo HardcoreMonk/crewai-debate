@@ -23,8 +23,17 @@ import sys
 from pathlib import Path
 from typing import Any, Iterator
 
-_PHASES_IMPLEMENT = ["plan", "impl", "commit", "adr", "pr-create"]
-_PHASES_REVIEW = ["review-wait", "review-fetch", "review-apply", "review-reply", "merge"]
+# Sibling import — sweep.py is invoked as `python3 lib/harness/sweep.py` from
+# the repo root, so the lib/harness dir is not on sys.path by default.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import state  # noqa: E402
+
+# Implement-task phase order: state.PHASES_IMPLEMENT covers the required
+# chain; `adr` is optional (state.PHASES_OPTIONAL) but useful for sweep
+# to surface when a task is mid-adr. Inserted before `pr-create`.
+_PHASES_IMPLEMENT_FULL = (
+    state.PHASES_IMPLEMENT[:-1] + state.PHASES_OPTIONAL + state.PHASES_IMPLEMENT[-1:]
+)
 
 
 def _next_phase(state_obj: dict[str, Any]) -> tuple[str, str] | None:
@@ -34,20 +43,20 @@ def _next_phase(state_obj: dict[str, Any]) -> tuple[str, str] | None:
     phases = state_obj.get("phases", {})
     if not isinstance(phases, dict):
         return None
-    order = _PHASES_IMPLEMENT if task_type == "implement" else _PHASES_REVIEW
+    order = _PHASES_IMPLEMENT_FULL if task_type == state.TASK_TYPE_IMPLEMENT else state.PHASES_REVIEW
     for ph in order:
         slot = phases.get(ph)
         if not isinstance(slot, dict):
             continue
         status = slot.get("status")
-        if status != "completed":
-            return ph, status or "pending"
+        if status != state.STATUS_COMPLETED:
+            return ph, status or state.STATUS_PENDING
     return None
 
 
 def _command_hint(slug: str, task_type: str, next_phase: str, state_obj: dict[str, Any]) -> str:
     """Synthesize a CLI command the operator can copy/paste to advance the task."""
-    if task_type == "review" and next_phase == "review-wait":
+    if task_type == state.TASK_TYPE_REVIEW and next_phase == "review-wait":
         base = state_obj.get("base_repo", "<base>")
         pr = state_obj.get("pr_number", "<pr>")
         target = state_obj.get("target_repo", "<path>")
@@ -55,15 +64,24 @@ def _command_hint(slug: str, task_type: str, next_phase: str, state_obj: dict[st
             f"python3 lib/harness/phase.py review-wait {slug} "
             f"--pr {pr} --base-repo {base} --target-repo {target}"
         )
-    if task_type == "implement" and next_phase == "plan":
+    if task_type == state.TASK_TYPE_IMPLEMENT and next_phase == "plan":
         return f"python3 lib/harness/phase.py plan {slug} --intent '...' --target-repo <path>"
     return f"python3 lib/harness/phase.py {next_phase} {slug}"
 
 
 def _scan(root: Path) -> Iterator[tuple[Path, dict[str, Any]]]:
-    """Yield (task_dir, state_obj) for each subdir of root that has a readable state.json."""
+    """Yield (task_dir, state_obj) for each subdir of root that has a readable state.json.
+
+    Subdirectory names that don't satisfy `state._validate_slug` are skipped — sweep
+    emits the slug into a copy/paste shell command, so an attacker-shaped dir name
+    must not flow through to the operator's terminal."""
     for child in sorted(root.iterdir()):
         if not child.is_dir():
+            continue
+        try:
+            state._validate_slug(child.name)
+        except ValueError:
+            print(f"sweep: warning: skipped {child}: slug fails state._validate_slug", file=sys.stderr)
             continue
         sp = child / "state.json"
         if not sp.exists():

@@ -20,6 +20,9 @@ from typing import Any
 
 PHASES_IMPLEMENT: list[str] = ["plan", "impl", "commit", "pr-create"]
 PHASES_REVIEW: list[str] = ["review-wait", "review-fetch", "review-apply", "review-reply", "merge"]
+# Branches the harness will refuse to touch — `cmd_plan` / `cmd_impl` /
+# `cmd_pr_create` fail-fast when HEAD matches one of these (§13.6 #14).
+PROTECTED_BRANCHES: frozenset[str] = frozenset({"main", "master"})
 # `adr` is an optional standalone phase — not part of any required chain but
 # allowed to appear in any implement-task's state.json via ensure_phase_slot.
 PHASES_OPTIONAL: list[str] = ["adr"]
@@ -278,12 +281,21 @@ def set_auto_bypass_pushed(state: dict[str, Any]) -> None:
 
     Writes to the new key `auto_bypass_commit_pushed`. Legacy state.json
     files written before the hybrid split (containing only the older
-    `auto_bypass_pushed` key) are read via a chained `.get` fallback at
-    every read site for one release; new writes use only the new key.
-    See DESIGN §13.6 #7-8 follow-up.
+    `auto_bypass_pushed` key) are read via `is_auto_bypass_pushed` for
+    one release; new writes use only the new key. See DESIGN §13.6 #7-8
+    follow-up.
     """
     state["phases"]["review-wait"]["auto_bypass_commit_pushed"] = True
     save_state(state)
+
+
+def is_auto_bypass_pushed(state: dict[str, Any]) -> bool:
+    """Read the auto-bypass pushed flag, honoring the legacy key fallback."""
+    rw = state["phases"]["review-wait"]
+    return bool(
+        rw.get("auto_bypass_commit_pushed", False)
+        or rw.get("auto_bypass_pushed", False)
+    )
 
 
 def set_auto_bypass_manual_attempted(
