@@ -108,7 +108,14 @@ If `review-wait` logs a `CodeRabbit rate-limit detected … deadline extended by
 2. Manually post `@coderabbitai review` on the PR to re-trigger the bot.
 3. The next poll picks up the new review (the §13.6 #7-7 watermark prevents re-using the prior round's review).
 
-Auto-posting the retry was deliberately skipped in the #7-8 cut — false-positive risk on PR-state writes was judged disproportionate to the marginal benefit. If a future dogfood reproduces the friction often enough to invert that trade-off, raise `RATE_LIMIT_EXTENSION_SEC` or add the auto-post in a follow-up PR.
+**Caveat (PR #21 dogfood gen-4 finding).** CodeRabbit may decline the manual retry with `"CodeRabbit is an incremental review system and does not re-review already reviewed commits."` — this happens when CodeRabbit has already marked the commit as "review attempted" via the rate-limit response, even though no actual review body was produced. In that case `@coderabbitai review` posts an `✅ Actions performed — Review triggered` reply but never delivers a real review. Workarounds (try in order):
+
+1. **Push a new commit** — even an empty commit (`git commit --allow-empty -m "trigger review"` followed by `git push`) usually resets CodeRabbit's "already-reviewed" state because each push gets a fresh head SHA.
+2. **Try `@coderabbitai full review`** — explicit full-pass command, may bypass the incremental check (not yet verified in our dogfoods).
+3. **Close and reopen the PR** — last resort; CodeRabbit treats a reopened PR as fresh.
+4. **OOB merge** — if CodeRabbit's review isn't strictly required, `gh pr merge <n> --squash --delete-branch` once the gate (`is_pr_mergeable`) is clean. Note the bypass in the PR conversation.
+
+Auto-posting the retry was deliberately skipped in the #7-8 cut — false-positive risk on PR-state writes was judged disproportionate to the marginal benefit. If a future dogfood reproduces the friction often enough to invert that trade-off, raise `RATE_LIMIT_EXTENSION_SEC`, add the auto-post, or implement the empty-commit escape hatch in a follow-up PR.
 
 ## Stacked PR merge protocol
 
