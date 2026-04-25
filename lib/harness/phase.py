@@ -477,11 +477,20 @@ def _annotate_with_harness_trailer(msg: str) -> str:
     return msg.rstrip() + sep + _HARNESS_TRAILER + "\n"
 
 
-def _git_commit_with_author(repo: Path, msg: str) -> subprocess.CompletedProcess:
+def _git_commit_with_author(
+    repo: Path, msg: str, *, allow_empty: bool = False,
+) -> subprocess.CompletedProcess:
     """Commit with author resolution:
       1. HARNESS_GIT_AUTHOR_{NAME,EMAIL} env vars override everything.
       2. Otherwise the target repo's `user.name`/`user.email` config is used.
       3. If neither is set, git itself will refuse — that's the right failure mode.
+
+    `allow_empty=True` adds `--allow-empty` so callers can record metadata
+    commits that have no working-tree changes (e.g. the §13.6 #7-8 B3-1b
+    auto-bypass empty commit). The author resolution still applies, so
+    repos without `user.name`/`user.email` config will refuse the empty
+    commit too — preventing the surprising-failure mode CodeRabbit's
+    PR #40 review flagged.
     """
     env_name = os.environ.get("HARNESS_GIT_AUTHOR_NAME")
     env_email = os.environ.get("HARNESS_GIT_AUTHOR_EMAIL")
@@ -490,7 +499,10 @@ def _git_commit_with_author(repo: Path, msg: str) -> subprocess.CompletedProcess
         args += ["-c", f"user.name={env_name}"]
     if env_email:
         args += ["-c", f"user.email={env_email}"]
-    return git(repo, *args, "commit", "-m", msg)
+    commit_args = ["commit"]
+    if allow_empty:
+        commit_args.append("--allow-empty")
+    return git(repo, *args, *commit_args, "-m", msg)
 
 
 # ---- phase drivers ----
@@ -1228,12 +1240,11 @@ def cmd_review_wait(args) -> int:
                                 print(f"review-wait: {skip_msg}", file=sys.stderr)
                                 logf.write(f"poll {poll_count}: {skip_msg}\n")
                             else:
-                                commit_proc = git(
+                                commit_proc = _git_commit_with_author(
                                     target_repo,
-                                    "commit", "--allow-empty",
-                                    "-m",
                                     "harness: trigger CodeRabbit re-review "
                                     "(§13.6 #7-8 auto-bypass) [B3-1b auto-bypass]",
+                                    allow_empty=True,
                                 )
                                 if commit_proc.returncode != 0:
                                     fail_msg = (
@@ -1253,10 +1264,18 @@ def cmd_review_wait(args) -> int:
                                     ).stdout.strip()
                                     push = push_branch_via_gh_token(target_repo, branch)
                                     if push.returncode != 0:
+                                        # Undo the local empty commit so a later
+                                        # successful push from review-apply does
+                                        # not silently publish this stale bypass
+                                        # commit. Hard reset is safe here — the
+                                        # only commit at HEAD is the one we just
+                                        # created in this very block.
+                                        git(target_repo, "reset", "--hard", "HEAD~1")
                                         push_tail = (push.stderr or "").strip()[-200:]
                                         fail_msg = (
                                             f"auto-bypass push failed (exit="
                                             f"{push.returncode}): {push_tail}; "
+                                            f"local empty commit reverted; "
                                             f"falling back to deadline extension only"
                                         )
                                         print(
