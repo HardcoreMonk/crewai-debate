@@ -59,14 +59,24 @@ def _install_state_mocks(phase, monkeypatch, s, log_path: Path) -> None:
     monkeypatch.setattr(phase.state, "log_dir", lambda task_slug: log_path)
 
 
-def _install_gh_mocks(phase, monkeypatch, *, merge_sha: str = "abc123def456") -> None:
+def _install_gh_mocks(phase, monkeypatch, *, merge_sha: str = "abc123def456") -> dict:
+    """Returns a counter dict so the test can assert merge_pr is invoked
+    exactly once — guards against regressions where a second cmd_merge
+    invocation accidentally reaches GitHub merge logic before fatal."""
     monkeypatch.setattr(phase.gh, "pr_view", lambda *a, **kw: {"state": "OPEN"})
     monkeypatch.setattr(phase.gh, "is_pr_mergeable", lambda pr: (True, []))
     monkeypatch.setattr(
         phase.gh, "fetch_live_review_summary",
         lambda *a, **kw: {"inline_unresolved_non_auto": 0},
     )
-    monkeypatch.setattr(phase.gh, "merge_pr", lambda *a, **kw: merge_sha)
+    calls = {"merge_pr": 0}
+
+    def _merge_pr(*a, **kw):
+        calls["merge_pr"] += 1
+        return merge_sha
+
+    monkeypatch.setattr(phase.gh, "merge_pr", _merge_pr)
+    return calls
 
 
 def test_real_merge_after_dry_run_proceeds_then_blocks_rerun(
@@ -77,7 +87,7 @@ def test_real_merge_after_dry_run_proceeds_then_blocks_rerun(
     slug = "merge-rerun-after-dry-run"
     s = _make_dry_run_completed_state(slug, tmp_path)
     _install_state_mocks(phase, monkeypatch, s, log_path)
-    _install_gh_mocks(phase, monkeypatch, merge_sha="abc123def456")
+    calls = _install_gh_mocks(phase, monkeypatch, merge_sha="abc123def456")
 
     args = SimpleNamespace(task_slug=slug, dry_run=False)
 
@@ -88,11 +98,14 @@ def test_real_merge_after_dry_run_proceeds_then_blocks_rerun(
     assert s["phases"]["merge"]["merge_sha"] == "abc123def456"
     assert s["phases"]["merge"]["dry_run"] is False
     assert s["phases"]["merge"]["status"] == "completed"
+    assert calls["merge_pr"] == 1
 
     # (2) A second invocation, now that a real merge has been recorded,
-    # must fatal with "merge already completed".
+    # must fatal with "merge already completed" without ever reaching
+    # gh.merge_pr — the call counter must stay at 1.
     with pytest.raises(SystemExit) as exc_info:
         phase.cmd_merge(args)
     assert exc_info.value.code == 1
     err = capsys.readouterr().err
     assert "merge already completed" in err
+    assert calls["merge_pr"] == 1
