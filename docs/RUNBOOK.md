@@ -117,6 +117,16 @@ If `review-wait` logs a `CodeRabbit rate-limit detected … deadline extended by
 
 Auto-posting the retry was deliberately skipped in the #7-8 cut — false-positive risk on PR-state writes was judged disproportionate to the marginal benefit. If a future dogfood reproduces the friction often enough to invert that trade-off, raise `RATE_LIMIT_EXTENSION_SEC`, add the auto-post, or implement the empty-commit escape hatch in a follow-up PR.
 
+### Auto-bypass mode (opt-in, side-effect aware)
+
+Follow-up B3-1b (search-tag `[B3-1b auto-bypass]`) adds an opt-in bypass that pushes an empty commit when a rate-limit marker is detected, so CodeRabbit fresh-reviews on a new SHA without the operator manually retrying. **Off by default.** Enable per-invocation via the CLI flag `--rate-limit-auto-bypass`, or set the environment variable `HARNESS_RATE_LIMIT_AUTO_BYPASS=1` for callers (cron jobs, wrappers) that cannot pass CLI args. The two opt-in paths are equivalent; either alone is sufficient.
+
+How it works: on rate-limit detection, after the deadline-extension log line, the harness checks `git status --porcelain` against the target repo. If clean, it runs `git commit --allow-empty -m "harness: trigger CodeRabbit re-review (§13.6 #7-8 auto-bypass) [B3-1b auto-bypass]"`, then `push_branch_via_gh_token(repo, head_branch)`. On success it records `auto_bypass_pushed=true` in `state.json` so subsequent polls in the same invocation do not push again (the flag intentionally resets when `bump_round` starts a new round, mirroring `rate_limit_extended`'s in-invocation scope).
+
+**Side-effect tradeoff.** The empty commit appears in the PR's commit list and on the GitHub review-screen file diff. Squash-merge (the harness default) collapses it back out so `main` history stays clean, but reviewers who scroll the commit list will see the auto-bypass commit. Search the search-tag `[B3-1b auto-bypass]` (in commit logs, PR conversation, or `git log --grep`) to find these. If your project rebase-merges or merge-commits, the empty commit will land on the base branch — re-evaluate before enabling.
+
+**Graceful degradation.** Three failure modes never escalate to a fatal: (a) target repo is dirty (logs `auto-bypass skipped: target repo is dirty (N uncommitted changes), falling back to deadline extension only`), (b) `git push` exits non-zero (logs `auto-bypass push failed (exit=N): <stderr-tail>; falling back to deadline extension only`), (c) `auto_bypass_pushed` already true from an earlier poll. In all three, the deadline-only fallback (#7-8) remains in effect and the operator can still apply the manual workarounds above.
+
 ## Stacked PR merge protocol
 
 Lessons from the 6-PR §13.6 merge cycle (DESIGN §11 dated log 2026-04-25 stack entry):
