@@ -29,6 +29,7 @@ See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-
 - `lib/harness/tests/test_gc.py` — `gc.py` retention-policy unit tests (9 cases).
 - `lib/harness/tests/test_gh_gate.py` — `is_pr_mergeable` unit tests (10 cases covering §13.6 #8).
 - `lib/harness/tests/test_coderabbit_zero_actionable.py` — `classify_review_body` unit tests (7 cases covering §13.6 #10 zero-actionable detection + precedence).
+- `lib/harness/tests/test_state_review_watermark.py` — `seen_review_id_max` / `seen_issue_comment_id_max` watermark unit tests (11 cases covering §13.6 #7-7 cross-round staleness gate, monotone setter, `bump_round` preservation, legacy backward-compat).
 - `lib/harness/fixtures/coderabbit/*.json` — reference CodeRabbit payloads for parser self-test.
 
 ## Harness — getting started
@@ -169,6 +170,7 @@ lib/
       test_gc.py           # gc.py unit tests
       test_gh_gate.py      # merge-gate unit tests (§13.6 #8)
       test_coderabbit_zero_actionable.py  # zero-actionable parser tests (§13.6 #10)
+      test_state_review_watermark.py      # cross-round staleness watermark tests (§13.6 #7-7)
 docs/
   adr/                     # Architecture Decision Records (2026-04-25)
     README.md              # ADR convention + index
