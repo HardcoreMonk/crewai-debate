@@ -24,6 +24,7 @@ Extract from the user's kickoff message:
 
 - `topic` (required): the coding task to debate. Strip one of these leading prefixes (case-insensitive, optional trailing space or colon): `debate:`, `debate`, `crewai:`, `crewai`, `토론:`, `토론`, `start a debate on`, `iterate on`. The remainder is the topic.
 - `max_iter` (optional, default 6): maximum Dev+Reviewer cycles before auto-escalation. Lower default than v2 (was 10) because 6 iterations × (draft + verdict) already fills a Discord-friendly response length.
+- `harness-slug` (optional, ADR-0003 bridge mode): a slug matching `[a-z][a-z0-9_-]{0,62}` to embed a copy-pasteable design.md sidecar block in the result. When present, the result includes an extra `SIDECAR (paste into state/harness/<slug>/design.md):` section so Discord users can manually save the debate's converged design and feed it to `lib/harness/phase.py plan`. The sidecar block is plain text — no Bash call — so Discord delivery is preserved. For terminal/MCP users who can write the file directly, prefer the dedicated `crewai-debate-harness` skill instead.
 
 If after stripping the prefix the topic is empty OR consists only of placeholder text like `<topic>`, `<주제>`, `...`, or whitespace — ask the user for a real topic and stop. Do NOT start the debate.
 
@@ -79,8 +80,44 @@ HISTORY_SUMMARY:
 - iter 1: <one-line summary of reviewer iter 1 verdict>
 - iter 2: <...>
 - ...
+
+[OPTIONAL — only when `harness-slug: <slug>` was supplied]
+SIDECAR (paste into state/harness/<slug>/design.md):
+```
+# Approved design — debate-converged (ADR-0003 sidecar)
+
+**Slug**: <slug>
+**Status**: <CONVERGED | ESCALATED: ...>
+**Iterations**: <iters_run>/<max_iter>
+**Topic**: <topic>
+
+## FINAL_DRAFT
+
+<FINAL_DRAFT body verbatim — Markdown bullets allowed>
+
+## FINAL_VERDICT
+
+<FINAL_VERDICT body verbatim>
+
+## History
+
+- iter 1: <...>
+- iter 2: <...>
+- ...
+```
+
 ===
 ```
+
+The SIDECAR section is plain text inside the result block — no Bash tool call — so Discord delivery is unaffected. Users on Discord can copy the fenced sidecar block and save it manually:
+
+```bash
+mkdir -p state/harness/<slug> && cat > state/harness/<slug>/design.md << 'EOF'
+<paste the fenced block content here>
+EOF
+```
+
+After the file exists, `python3 lib/harness/phase.py plan <slug> --intent "..." --target-repo ...` will detect the sidecar and inject it into the planner's prompt under "Approved design context (do not deviate)" (ADR-0003 step 1/5, PR #25).
 
 ## Role prompts (internal, for your own role-switching)
 
