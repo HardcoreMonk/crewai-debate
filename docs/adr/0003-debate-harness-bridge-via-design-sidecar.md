@@ -1,5 +1,7 @@
 # ADR-0003: Bridge crewai-debate to harness via per-task design.md sidecar
 
+**Status**: Accepted (2026-04-25)
+
 ## Context
 
 The crewai repo carries two cooperating tracks (DESIGN §1, §2):

@@ -1,5 +1,7 @@
 # ADR-0001: Harness state retention policy
 
+**Status**: Accepted (2026-04-25)
+
 ## Context
 
 The dogfood harness writes per-task state under `state/harness/<slug>/` and never removes it, so the directory grows unbounded across runs. Most completed tasks are only interesting for a short window after they finish, while in-progress tasks must never be discarded mid-run. We need a predictable, reviewable way to reclaim disk without risking live state or coupling cleanup to the runner's hot path.
