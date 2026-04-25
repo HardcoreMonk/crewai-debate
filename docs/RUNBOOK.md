@@ -162,3 +162,63 @@ python3 lib/harness/gc.py --root /alt/state/harness --apply  # override root
 **Retention policy:** every task whose `state.json` shows any phase `running`/`pending`, or a non-terminal `current_phase`, is **always kept** — `--keep` only applies to completed tasks. Corrupt / unreadable / non-dict / non-UTF-8 `state.json` entries are *skipped with a warning* and left in place, never deleted.
 
 Dry-run is the default; `--apply` must be passed explicitly. See ADR-0001 for the full policy and alternatives considered.
+
+## Bridging debate to harness (ADR-0003)
+
+**When:** Operator wants debate-converged design decisions to lock in for a harness run, instead of being silently re-derived by the planner from a 1-line `--intent`. (Background: Model A validation cycle, 2026-04-25, observed 5/8 design points diverge between debate APPROVED and planner output. See DESIGN §15.)
+
+**Preconditions:**
+- Session is **terminal / Claude Code / MCP** (NOT Discord). The bridge skill writes a Bash sidecar after the debate body, which would be dropped by Discord's delivery layer. For Discord, run plain `crewai-debate` and write the sidecar manually.
+- A fresh harness slug — if `state/harness/<slug>/state.json` already exists, plan will refuse later. The skill itself does not check, but `phase.py plan` will fail loudly with `task already exists`.
+
+**Workflow:**
+
+1. Operator invokes the bridge skill with slug + topic on the first line of the message:
+
+    ```
+    debate-harness: my-fix-slug: should we add --foo flag with default 0 or 1?
+    ```
+
+    The skill emits the full Dev↔Reviewer transcript, ending with `=== crewai-debate result ===`, then calls Bash to write `state/harness/my-fix-slug/design.md` with the FINAL_DRAFT and metadata. A trailing line confirms the path.
+
+2. Operator runs the harness's plan phase as normal, with a 1-line intent that summarises the converged design as a conventional-commit subject:
+
+    ```bash
+    python3 lib/harness/phase.py plan my-fix-slug \
+      --intent "feat: add --foo with conservative default 0" \
+      --target-repo /path/to/target
+    ```
+
+    `phase.py plan` detects the sidecar and logs to stderr:
+
+    ```
+    plan: design.md sidecar detected (1234 chars) — injecting as approved design context (ADR-0003)
+    ```
+
+    The planner reads the design block as a load-bearing constraint and produces a plan.md that respects the debated decisions.
+
+3. Continue with the standard pipeline (`impl → commit → adr → pr-create → review-* → merge`). The sidecar only affects `plan`; downstream phases consume `plan.md` as usual.
+
+**Recovery scenarios:**
+
+- **Sidecar already exists** (`bridge: refused — design.md already exists at <path>`): the operator must explicitly `rm state/harness/<slug>/design.md` to overwrite, or pick a fresh slug. The refusal exists because re-debating yields a different transcript and silently overwriting an operator-approved decision defeats the bridge's purpose.
+- **Planner aborts on contradiction**: the planner persona (post-PR #26) is required to STOP and emit a single-paragraph error if its target-repo inspection contradicts the design (e.g. the design assumes a path that doesn't exist). Operator must edit `design.md` (loosen the constraint or fix the assumption), then re-run plan in the same slug — `init_state` now tolerates a pre-existing dir.
+- **Discord-backed session by mistake**: the bridge skill's pre-execution checklist aborts with a message routing the operator to plain `crewai-debate` + manual sidecar write. If you only realise after the fact, the partial Discord output is not destructive — re-run from a terminal.
+
+**Sidecar format** (for manual creation if not using the skill):
+
+```markdown
+# Approved design — debate-converged (ADR-0003 sidecar)
+
+**Slug**: <slug>
+**Status**: <CONVERGED | ESCALATED: …>
+**Topic**: <one-line topic>
+
+## FINAL_DRAFT
+
+<load-bearing decisions, written in declarative form — defaults,
+semantics, fallback chains, regex specifics, named modes/flags.
+The planner will treat each statement here as a constraint.>
+```
+
+The harness reads the file verbatim; structure is freeform Markdown beyond the title. Concrete file paths and exact test names are NOT required in the sidecar — the planner discovers those by repo inspection.
