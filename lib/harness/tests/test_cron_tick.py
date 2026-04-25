@@ -140,10 +140,10 @@ def test_cron_tick_skip_already_running(tmp_path):
     slug = "review-already-running"
     _make_review_task(state_root, slug)
 
-    # Start a long sleeper whose argv contains "review-wait <slug>" — pgrep -f
-    # will match it.
+    # Start a long sleeper whose argv contains "review-wait <slug>" followed
+    # by a space and additional args — pgrep -f's anchored regex must match.
     sleeper = subprocess.Popen(
-        ["bash", "-c", f"exec -a 'sleeper review-wait {slug}' sleep 5"],
+        ["bash", "-c", f"exec -a 'sleeper review-wait {slug} --pr 0' sleep 5"],
     )
     try:
         time.sleep(0.3)  # let pgrep see it
@@ -152,6 +152,34 @@ def test_cron_tick_skip_already_running(tmp_path):
         assert f"skip slug={slug}" in log
         assert "skipped=1" in log
         assert "fired=0" in log
+    finally:
+        sleeper.terminate()
+        sleeper.wait(timeout=3)
+
+
+def test_cron_tick_pgrep_does_not_false_match_substring_slug(tmp_path):
+    """§13.6 #14-adjacent — slug `review-foo` running must not block the
+    distinct slug `review-foo-bar` whose name has the first as a prefix.
+    The anchored `( |$)` boundary in cron-tick's pgrep is what guarantees this."""
+    state_root = _setup_fixture(tmp_path)
+    short_slug = "review-foo"
+    long_slug = "review-foo-bar"
+    # Only the long slug is in the queue (state.json). The sleeper holds the
+    # short slug's argv.
+    _make_review_task(state_root, long_slug)
+
+    sleeper = subprocess.Popen(
+        ["bash", "-c", f"exec -a 'sleeper review-wait {short_slug} --pr 0' sleep 5"],
+    )
+    try:
+        time.sleep(0.3)
+        rc, log = _run_cron_tick(tmp_path)
+        assert rc == 0
+        # The long slug must fire — the short slug's running pgrep must not
+        # false-match against `review-wait review-foo-bar`.
+        assert f"fire slug={long_slug}" in log
+        assert "fired=1" in log
+        assert f"skip slug={long_slug}" not in log
     finally:
         sleeper.terminate()
         sleeper.wait(timeout=3)

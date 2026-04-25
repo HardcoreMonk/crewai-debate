@@ -83,10 +83,10 @@ except (json.JSONDecodeError, KeyError):
         continue
     fi
 
-    # Skip if a review-wait for this slug is already running. Match the
-    # full argument shape (`review-wait <slug>`) to avoid colliding with
-    # other review tasks that share a substring.
-    if pgrep -f "review-wait ${SLUG}" >/dev/null 2>&1; then
+    # Skip if a review-wait for this slug is already running. Anchor the
+    # match to the slug boundary (space-after or end-of-line) so a slug
+    # like `review-foo` doesn't false-match `review-wait review-foo-bar`.
+    if pgrep -f "review-wait ${SLUG}( |\$)" >/dev/null 2>&1; then
         printf '%s skip slug=%s: already running\n' "$(date -Is)" "$SLUG" >>"$LOG"
         skipped=$((skipped + 1))
         continue
