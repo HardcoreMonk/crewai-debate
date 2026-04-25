@@ -567,6 +567,22 @@ def _adr_filename_slug(adr_body: str) -> str:
     return slug[:60] or "untitled"
 
 
+def _build_adr_commit_message(adr_body: str, num_str: str) -> str:
+    """Compose `docs(adr): NNNN <Title>` from the ADR's H1.
+
+    Strips `ADR-NNNN:` prefix if the H1 carries it, since `NNNN` already
+    appears in the conventional-commit subject. Trailer is appended via
+    `_annotate_with_harness_trailer` for parity with `cmd_commit`.
+    """
+    heading = adr_body.split("\n", 1)[0].lstrip("# ").strip() or "ADR"
+    title_only = re.sub(
+        r"^ADR[-_ ]?\d+\s*:\s*", "", heading, flags=re.IGNORECASE
+    ).strip()
+    if not title_only:
+        title_only = heading
+    return _annotate_with_harness_trailer(f"docs(adr): {num_str} {title_only}")
+
+
 def cmd_adr(args) -> int:
     s = state.load_state(args.task_slug)
     if s.get("task_type") != state.TASK_TYPE_IMPLEMENT:
@@ -625,11 +641,39 @@ def cmd_adr(args) -> int:
             fatal(f"refuse overwrite: {adr_file} already exists")
         adr_file.write_text(adr_body.rstrip() + "\n")
 
-        state.finish_attempt(s, "adr", exit_code=0, note=f"wrote {adr_file.name}")
+        commit_sha: str | None = None
+        if getattr(args, "auto_commit", False):
+            # Stage ONLY the new ADR file. Other working-tree state is left
+            # untouched so the operator's unrelated changes never get folded
+            # into this commit.
+            git(target_repo, "add", "--", str(adr_file.relative_to(target_repo)))
+            commit_msg = _build_adr_commit_message(adr_body, num_str)
+            commit_proc = _git_commit_with_author(target_repo, commit_msg)
+            if commit_proc.returncode != 0:
+                note = (
+                    f"adr file written but auto-commit failed: "
+                    f"{commit_proc.stderr.strip()}"
+                )
+                state.finish_attempt(s, "adr", exit_code=commit_proc.returncode, note=note)
+                state.set_phase_status(s, "adr", state.STATUS_FAILED,
+                                       final_output_path=str(adr_file))
+                fatal(note)
+            commit_sha = git(target_repo, "rev-parse", "HEAD").stdout.strip()
+            s["phases"]["adr"]["commit_sha"] = commit_sha
+            state.save_state(s)
+
+        note = f"wrote {adr_file.name}"
+        if commit_sha:
+            note += f" + commit {commit_sha[:12]}"
+        state.finish_attempt(s, "adr", exit_code=0, note=note)
         state.set_phase_status(s, "adr", state.STATUS_COMPLETED,
                                final_output_path=str(adr_file))
         print(f"adr: OK → {adr_file}")
-        print("Review the file, then commit it yourself — `adr` does NOT auto-commit.")
+        if commit_sha:
+            print(f"     committed as {commit_sha} on current branch")
+        else:
+            print("Review the file, then commit it yourself — pass --auto-commit "
+                  "next time to fold the ADR into the same branch automatically (§13.6 #7-4).")
         return 0
 
     state.set_phase_status(s, "adr", state.STATUS_FAILED)
@@ -1424,6 +1468,13 @@ def main() -> int:
     ap.add_argument("--base-repo", help="GitHub slug owner/repo (review-wait, first call)")
     # pr-create
     ap.add_argument("--base", help="pr-create: base branch (default: main)")
+    # adr — opt-in auto-commit (§13.6 #7-4). Default off preserves the §13.6 #3b
+    # principle that ADR-vs-impl PR layout is an operator decision.
+    ap.add_argument(
+        "--auto-commit", action="store_true",
+        help="adr: stage and commit the new ADR file on the current branch "
+             "(default: leave untracked for operator review).",
+    )
     # merge
     ap.add_argument("--dry-run", action="store_true", help="merge: evaluate gate, don't merge")
     args = ap.parse_args()

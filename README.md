@@ -30,6 +30,7 @@ See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-
 - `lib/harness/tests/test_gh_gate.py` — `is_pr_mergeable` unit tests (10 cases covering §13.6 #8).
 - `lib/harness/tests/test_coderabbit_zero_actionable.py` — `classify_review_body` unit tests (7 cases covering §13.6 #10 zero-actionable detection + precedence).
 - `lib/harness/tests/test_state_review_watermark.py` — `seen_review_id_max` / `seen_issue_comment_id_max` watermark unit tests (11 cases covering §13.6 #7-7 cross-round staleness gate, monotone setter, `bump_round` preservation, legacy backward-compat).
+- `lib/harness/tests/test_adr_commit_message.py` — `_build_adr_commit_message` unit tests (9 cases covering §13.6 #7-4 `adr --auto-commit` subject composition: ADR-prefix strip, width preservation, harness trailer).
 - `lib/harness/fixtures/coderabbit/*.json` — reference CodeRabbit payloads for parser self-test.
 
 ## Harness — getting started
@@ -44,12 +45,13 @@ python3 lib/harness/phase.py plan add-feature-X \
 python3 lib/harness/phase.py impl      add-feature-X
 python3 lib/harness/phase.py commit    add-feature-X
 python3 lib/harness/phase.py adr       add-feature-X          # optional: generate ADR file
+python3 lib/harness/phase.py adr       add-feature-X --auto-commit  # …or fold the ADR into the same branch
 python3 lib/harness/phase.py pr-create add-feature-X          # optional: push + open PR
 ```
 
 The `pr-create` phase is the bridge from MVP-A to MVP-D: after it finishes it prints the exact `review-wait` command to run next, so `intent → merged PR` works as a single chain when CodeRabbit is installed on the target repo.
 
-The `adr` phase is standalone and optional: if the target repo has a `docs/adr/` (or `adr/`, `docs/adrs/`) directory, it writes a new numbered ADR derived from `plan.md` using the `adr-writer` persona. It does **not** auto-commit — the operator reviews and commits the ADR themselves so it lands in the intended repo/branch.
+The `adr` phase is standalone and optional: if the target repo has a `docs/adr/` (or `adr/`, `docs/adrs/`) directory, it writes a new numbered ADR derived from `plan.md` using the `adr-writer` persona. By default it does **not** auto-commit — the operator reviews and commits the ADR themselves so the project decides whether the ADR rides in the same PR as the impl change or goes in a separate PR. Pass `--auto-commit` to make `adr` stage and commit the new file on the current branch (only the new ADR file is staged — other working-tree state is untouched). See DESIGN §13.6 #7-4.
 
 **MVP-D pipeline** — auto-apply CodeRabbit feedback on an existing PR:
 
@@ -171,6 +173,7 @@ lib/
       test_gh_gate.py      # merge-gate unit tests (§13.6 #8)
       test_coderabbit_zero_actionable.py  # zero-actionable parser tests (§13.6 #10)
       test_state_review_watermark.py      # cross-round staleness watermark tests (§13.6 #7-7)
+      test_adr_commit_message.py          # adr --auto-commit subject tests (§13.6 #7-4)
 docs/
   adr/                     # Architecture Decision Records (2026-04-25)
     README.md              # ADR convention + index
