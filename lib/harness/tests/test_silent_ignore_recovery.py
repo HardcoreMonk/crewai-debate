@@ -69,7 +69,10 @@ def test_close_pr_propagates_gh_errors(mods, monkeypatch):
 # ---- cmd_review_wait timeout recovery branch ----
 
 
-def _build_review_state(state_mod, tmp_path, monkeypatch, *, marker_pushed: bool, round_no: int = 1):
+def _build_review_state(
+    state_mod, tmp_path, monkeypatch, *,
+    marker_pushed: bool, round_no: int = 1, manual_attempted: bool = False,
+):
     """Set up an isolated review-task state.json suitable for poking the
     timeout-branch directly."""
     monkeypatch.setattr(state_mod, "STATE_ROOT", tmp_path)
@@ -84,6 +87,9 @@ def _build_review_state(state_mod, tmp_path, monkeypatch, *, marker_pushed: bool
             state_mod.bump_round(s)
     if marker_pushed:
         s["phases"]["review-wait"]["auto_bypass_commit_pushed"] = True
+    if manual_attempted:
+        s["phases"]["review-wait"]["auto_bypass_manual_attempted"] = True
+    if marker_pushed or manual_attempted:
         state_mod.save_state(s)
     return s
 
@@ -182,12 +188,17 @@ def test_recovery_skipped_round_2(mods, tmp_path, monkeypatch):
         phase_mod.cmd_review_wait(args)
 
 
-def test_recovery_skipped_marker_not_pushed(mods, tmp_path, monkeypatch):
-    """If auto-bypass never fired, silent-ignore is not the cause; don't recover."""
+def test_recovery_skipped_when_no_auto_bypass_attempt(mods, tmp_path, monkeypatch):
+    """If auto-bypass never fired (no manual post AND no marker push), the
+    silent-ignore guard should not recover — that timeout shape is the
+    operator-never-opted-in case, not a bucket-exhaustion subtype."""
     phase_mod, gh_mod, state_mod = mods
-    _build_review_state(state_mod, tmp_path, monkeypatch, marker_pushed=False)
-    monkeypatch.setattr(gh_mod, "close_pr", lambda *a: pytest.fail("marker not pushed; must not close"))
-    monkeypatch.setattr(gh_mod, "reopen_pr", lambda *a: pytest.fail("marker not pushed; must not reopen"))
+    _build_review_state(
+        state_mod, tmp_path, monkeypatch,
+        marker_pushed=False, manual_attempted=False,
+    )
+    monkeypatch.setattr(gh_mod, "close_pr", lambda *a: pytest.fail("no auto-bypass; must not close"))
+    monkeypatch.setattr(gh_mod, "reopen_pr", lambda *a: pytest.fail("no auto-bypass; must not reopen"))
     monkeypatch.setattr(phase_mod, "PHASE_TIMEOUTS", {**phase_mod.PHASE_TIMEOUTS, "review-wait": 0})
     monkeypatch.setattr(gh_mod, "pr_view", lambda *a, **kw: {"state": "OPEN", "headRefName": "feat/x"})
     monkeypatch.setattr(gh_mod, "list_reviews", lambda *a, **kw: [])
@@ -201,6 +212,53 @@ def test_recovery_skipped_marker_not_pushed(mods, tmp_path, monkeypatch):
     )
     with pytest.raises(SystemExit):
         phase_mod.cmd_review_wait(args)
+
+
+def test_recovery_triggers_when_manual_attempted_only(mods, tmp_path, monkeypatch):
+    """§13.6 #15 fix: when CodeRabbit acks the manual `@coderabbitai review`
+    but never declines and never delivers, the B3-1d hybrid stage-2 (marker
+    push) never fires. Recovery should still trigger because the manual was
+    attempted — close+reopen's cache reset is marker-independent."""
+    phase_mod, gh_mod, state_mod = mods
+    _build_review_state(
+        state_mod, tmp_path, monkeypatch,
+        marker_pushed=False, manual_attempted=True,
+    )
+
+    close_calls, reopen_calls, recursion_calls = [], [], []
+    monkeypatch.setattr(gh_mod, "close_pr", lambda r, n: close_calls.append((r, n)))
+    monkeypatch.setattr(gh_mod, "reopen_pr", lambda r, n: reopen_calls.append((r, n)))
+
+    original = phase_mod.cmd_review_wait
+    state_pkg = {"depth": 0}
+
+    def proxy(args):
+        state_pkg["depth"] += 1
+        if state_pkg["depth"] == 1:
+            return original(args)
+        recursion_calls.append(args)
+        return 0
+
+    monkeypatch.setattr(phase_mod, "cmd_review_wait", proxy)
+    monkeypatch.setattr(phase_mod, "PHASE_TIMEOUTS", {**phase_mod.PHASE_TIMEOUTS, "review-wait": 0})
+    monkeypatch.setattr(gh_mod, "pr_view", lambda *a, **kw: {"state": "OPEN", "headRefName": "feat/x"})
+    monkeypatch.setattr(gh_mod, "list_reviews", lambda *a, **kw: [])
+    monkeypatch.setattr(gh_mod, "list_issue_comments", lambda *a, **kw: [])
+
+    args = argparse.Namespace(
+        task_slug="review-silent-ignore-test",
+        pr=None, base_repo=None, target_repo=None,
+        rate_limit_auto_bypass=False,
+        silent_ignore_recovery=True,
+    )
+
+    rc = phase_mod.cmd_review_wait(args)
+    assert rc == 0
+    assert close_calls == [("o/r", 99)], "manual-only subtype must still close+reopen"
+    assert reopen_calls == [("o/r", 99)]
+    assert len(recursion_calls) == 1
+    s = state_mod.load_state("review-silent-ignore-test")
+    assert s["round"] == 2
 
 
 def test_recovery_env_var_equivalent_to_flag(mods, tmp_path, monkeypatch):

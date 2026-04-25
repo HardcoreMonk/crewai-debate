@@ -1535,19 +1535,27 @@ def cmd_review_wait(args) -> int:
 
         # §13.6 #13 fix candidate (c) — silent-ignore recovery.
         # Trigger conditions: opt-in flag set, this is the first round (no prior
-        # recovery), and the auto-bypass marker was actually pushed (so the silent
-        # ignore is not just "operator never opted into auto-bypass"). When all
-        # match, close+reopen the PR to refresh CodeRabbit's already-reviewed
-        # cache, bump_round, and re-enter the polling loop once.
+        # recovery), and any auto-bypass attempt happened (manual review post OR
+        # marker commit pushed). The "auto-bypass tried something" gate ensures
+        # we don't recover when the operator never opted into auto-bypass — but
+        # both stages (manual-only and full marker-push) are valid silent-ignore
+        # subtypes (§13.6 #15 — pre-marker subtype where CodeRabbit acks but
+        # never declines or delivers, so stage-2 marker push never fires).
+        # close+reopen's CodeRabbit-cache reset is marker-independent.
         recovery_enabled = (
             getattr(args, "silent_ignore_recovery", False)
             or os.environ.get("HARNESS_SILENT_IGNORE_RECOVERY") == "1"
         )
-        if recovery_enabled and s.get("round", 1) == 1 and state.is_auto_bypass_pushed(s):
+        rw = s["phases"]["review-wait"]
+        any_auto_bypass = (
+            rw.get("auto_bypass_manual_attempted", False)
+            or state.is_auto_bypass_pushed(s)
+        )
+        if recovery_enabled and s.get("round", 1) == 1 and any_auto_bypass:
             print(
                 f"review-wait: silent-ignore recovery — close+reopen "
-                f"PR #{pr_number} (round 1 timed out, marker pushed; "
-                f"see DESIGN §13.6 #13)",
+                f"PR #{pr_number} (round 1 timed out, auto-bypass attempted; "
+                f"see DESIGN §13.6 #13/#15)",
                 file=sys.stderr,
             )
             try:
