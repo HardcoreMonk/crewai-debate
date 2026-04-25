@@ -272,16 +272,53 @@ def read_persona(name: str) -> str:
     return (PERSONAS_DIR / f"{name}.md").read_text()
 
 
-def build_plan_prompt(persona: str, intent: str, target_repo: Path) -> str:
+def build_plan_prompt(
+    persona: str,
+    intent: str,
+    target_repo: Path,
+    approved_design: str | None = None,
+) -> str:
+    """Compose the planner prompt.
+
+    When `approved_design` is provided (operator pre-approved a design via
+    a debate sidecar — see ADR-0003), it is injected as a load-bearing
+    constraint section. The planner persona's "Approved design context"
+    rule turns its decisions into hard requirements rather than
+    suggestions; concrete file path selection still belongs to the
+    planner's repo inspection.
+    """
+    design_block = ""
+    if approved_design and approved_design.strip():
+        design_block = (
+            "## Approved design context (do not deviate)\n\n"
+            f"{approved_design.strip()}\n\n"
+            "---\n\n"
+        )
     return (
         f"{persona}\n\n"
         "---\n\n"
+        f"{design_block}"
         "# Task\n\n"
         f"Target repo: {target_repo.resolve()}\n"
         f"Intent: {intent}\n\n"
         "Emit ONLY the plan.md content as your complete output. "
         "Do not wrap in triple backticks. Do not add preamble."
     )
+
+
+def _read_design_sidecar(task_slug: str) -> str | None:
+    """Return the contents of `state/harness/<slug>/design.md` if it exists,
+    else None. Operators (or a bridge skill — ADR-0003) write this file
+    before invoking `phase.py plan` to lock in pre-approved design
+    decisions. Absent file = no sidecar = pre-ADR-0003 behaviour.
+    """
+    path = state.task_dir(task_slug) / "design.md"
+    if not path.exists():
+        return None
+    try:
+        return path.read_text()
+    except OSError:
+        return None
 
 
 def build_impl_prompt(
@@ -439,9 +476,16 @@ def cmd_plan(args) -> int:
         fatal(f"task {args.task_slug!r} already exists — delete state/harness/{args.task_slug}/ to re-plan")
 
     persona = read_persona("planner")
+    approved_design = _read_design_sidecar(args.task_slug)
+    if approved_design is not None:
+        print(
+            f"plan: design.md sidecar detected ({len(approved_design)} chars) — "
+            "injecting as approved design context (ADR-0003)",
+            file=sys.stderr,
+        )
     for attempt_no in range(PHASE_MAX_ATTEMPTS["plan"]):
         attempt = state.start_attempt(s, "plan")
-        prompt = build_plan_prompt(persona, args.intent, target_repo)
+        prompt = build_plan_prompt(persona, args.intent, target_repo, approved_design)
         res = runner.run_claude(
             prompt=prompt,
             cwd=target_repo,
