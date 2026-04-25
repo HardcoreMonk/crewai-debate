@@ -6,9 +6,9 @@ The harness `merge` phase supports a `dry_run` mode that records a completed pha
 
 ## Decision
 
-`cmd_merge` treats a prior dry-run completion as a re-runnable state and proceeds with the real merge, overwriting the phase result; only a prior *real* merge (one with a recorded `merge_sha` and `dry_run=False`) remains a fatal "already completed" condition.
+`cmd_merge` treats a prior dry-run completion as a re-runnable state and proceeds with the real merge, overwriting the phase result; only a prior *real* merge — detected conservatively as `dry_run is False` **or** `merge_sha` set — remains a fatal "already completed" condition.
 
-- The completion guard inspects the prior result's `dry_run` flag and `merge_sha` rather than the bare `status == completed`.
+- The completion guard inspects the prior result's `dry_run` flag and `merge_sha` rather than the bare `status == completed`. A re-run is allowed only when the prior result is a dry-run signature (`dry_run is True` and `merge_sha` is unset/None).
 - A re-run from dry-run state overwrites the phase result, flipping `dry_run` to `False` and populating `merge_sha`.
 - `_require_prev_phase_completed` and the `state.set_merge_result` signature are unchanged — the relaxation is local to `cmd_merge`'s self-check.
 
