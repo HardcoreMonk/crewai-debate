@@ -1,5 +1,7 @@
 # ADR-0002: Allow cmd_merge re-run after dry-run completion
 
+**Status**: Accepted (2026-04-25)
+
 ## Context
 
 The harness `merge` phase supports a `dry_run` mode that records a completed phase without actually merging the PR, so operators can validate the pipeline before committing. However, `cmd_merge` previously fatal-exited on any prior `completed` status, which meant a successful dry-run permanently blocked the same task from ever performing the real merge — defeating the purpose of dry-run as a rehearsal step. The forcing function was a dogfood run where the operator wanted to dry-run first, inspect the result, then re-invoke for the real merge in the same task directory.
