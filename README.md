@@ -22,12 +22,13 @@ See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-
 - `lib/harness/runner.py` — `claude --print` headless wrapper shared by all LLM-invoking phases.
 - `lib/harness/gc.py` — standalone CLI to prune old `state/harness/<slug>/` dirs under a retention policy. See `docs/adr/0001-harness-state-retention-policy.md`.
 - `lib/harness/checks.sh` — plan-boundary diff check + Python syntax verification.
-- `lib/harness/coderabbit.py` — CodeRabbit review parsing (walkthrough markers, severity × criticality, AI-agent prompt extraction).
+- `lib/harness/coderabbit.py` — CodeRabbit review parsing (walkthrough markers, severity × criticality, AI-agent prompt extraction). Recognises both `**Actionable comments posted: N**` (formal review) and `"No actionable comments were generated"` (issue-comment-only zero-finding case, §13.6 #10).
 - `lib/harness/gh.py` — thin `gh` CLI wrapper (PR view, list reviews/comments, GraphQL review-thread resolution, post comment, merge). Token-leak-sanitized via `_sanitize_completed`. Merge-gate accepts `reviewDecision ∈ {null, "", APPROVED}` so self-managed repos without a review rule can merge (see DESIGN §13.6 #8).
 - `crew/personas/planner.md`, `crew/personas/implementer.md`, `crew/personas/adr-writer.md` — harness-specific persona system prompts.
 - `lib/harness/tests/mock_e2e.py` — mock E2E dry-run (gh + runner + push monkey-patched).
 - `lib/harness/tests/test_gc.py` — `gc.py` retention-policy unit tests (9 cases).
 - `lib/harness/tests/test_gh_gate.py` — `is_pr_mergeable` unit tests (10 cases covering §13.6 #8).
+- `lib/harness/tests/test_coderabbit_zero_actionable.py` — `classify_review_body` unit tests (7 cases covering §13.6 #10 zero-actionable detection + precedence).
 - `lib/harness/fixtures/coderabbit/*.json` — reference CodeRabbit payloads for parser self-test.
 
 ## Harness — getting started
@@ -167,6 +168,7 @@ lib/
       mock_e2e.py          # network/LLM-free dry run
       test_gc.py           # gc.py unit tests
       test_gh_gate.py      # merge-gate unit tests (§13.6 #8)
+      test_coderabbit_zero_actionable.py  # zero-actionable parser tests (§13.6 #10)
 docs/
   adr/                     # Architecture Decision Records (2026-04-25)
     README.md              # ADR convention + index

@@ -16,6 +16,9 @@ CODERABBIT_AUTHORS = frozenset({"coderabbitai[bot]", "coderabbitai"})
 
 # Review-body signal markers. Narrow regex to reduce false-positive surface.
 ACTIONABLE_RE = re.compile(r"^\s*\*\*Actionable comments posted:\s*(\d+)\*\*", re.MULTILINE)
+# Zero-actionable variant — CodeRabbit posts this as an issue comment (NOT a
+# formal review object) on PRs with no findings. See DESIGN §13.6 #10.
+NO_ACTIONABLE_RE = re.compile(r"No actionable comments were generated")
 SKIP_MARKER_RE = re.compile(r"<!--\s*[^>]*skip review by coderabbit\.ai[^>]*-->", re.IGNORECASE)
 FAIL_MARKER_RE = re.compile(r"<!--\s*[^>]*failure by coderabbit\.ai[^>]*-->", re.IGNORECASE)
 WALKTHROUGH_START = re.compile(r"<!--\s*walkthrough_start\s*-->", re.IGNORECASE)
@@ -134,6 +137,8 @@ def classify_review_body(body: str) -> ReviewSignal:
     m = ACTIONABLE_RE.search(body)
     if m:
         return ReviewSignal(kind="complete", actionable_count=int(m.group(1)), body=body)
+    if NO_ACTIONABLE_RE.search(body):
+        return ReviewSignal(kind="complete", actionable_count=0, body=body)
     return ReviewSignal(kind="none", body=body)
 
 
