@@ -7,6 +7,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 _HERE = Path(__file__).resolve().parent
 _LIB = _HERE.parent
 sys.path.insert(0, str(_LIB))
@@ -212,3 +214,46 @@ def test_consistency_returns_empty_when_files_section_lists_everything(tmp_path)
         changes="- a.md: x\n- b/c.py: y\n- d.txt: z\n",
     )
     assert phase.validate_plan_consistency(plan, tmp_path) == []
+
+
+# ---- validate_plan_consistency strict mode ----
+
+
+def test_consistency_strict_clean_plan_returns_empty(tmp_path):
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "phase.py").write_text("")
+    plan = _plan(
+        files="- lib/phase.py\n",
+        changes="- lib/phase.py: real change\n",
+    )
+    assert phase.validate_plan_consistency(plan, tmp_path, strict=True) == []
+
+
+def test_consistency_strict_raises_on_stale_path(tmp_path):
+    plan = _plan(
+        files="- README.md\n",
+        changes="- README.md: link to ADR `001-foo.md`\n",
+    )
+    with pytest.raises(phase.PlanConsistencyError) as excinfo:
+        phase.validate_plan_consistency(plan, tmp_path, strict=True)
+    assert "001-foo.md" in str(excinfo.value)
+
+
+def test_consistency_strict_ignores_html_comment_path(tmp_path):
+    plan = _plan(
+        files="- README.md\n",
+        changes="- README.md: edit <!-- TODO: lib/imaginary.py -->\n",
+    )
+    # Strict mode must not raise — the path token lives in an HTML
+    # comment that `_strip_html_comments` removes before scanning.
+    assert phase.validate_plan_consistency(plan, tmp_path, strict=True) == []
+
+
+def test_consistency_default_is_lenient(tmp_path):
+    plan = _plan(
+        files="- README.md\n",
+        changes="- README.md: link to ADR `001-foo.md`\n",
+    )
+    warnings = phase.validate_plan_consistency(plan, tmp_path)
+    assert isinstance(warnings, list)
+    assert warnings  # non-empty: stale path is flagged but not raised

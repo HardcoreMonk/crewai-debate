@@ -222,3 +222,22 @@ The planner will treat each statement here as a constraint.>
 ```
 
 The harness reads the file verbatim; structure is freeform Markdown beyond the title. Concrete file paths and exact test names are NOT required in the sidecar — the planner discovers those by repo inspection.
+
+## When to enable strict plan-consistency mode
+
+**When:** Pass `--strict-consistency` to `phase.py plan` to promote `validate_plan_consistency` warnings (DESIGN §13.6 #7-5: stale or placeholder paths in `## changes` / `## out-of-scope` that aren't declared in `## files` and don't exist in the target repo) from advisory stderr lines into a fatal that consumes one plan attempt.
+
+Default is off — DESIGN §13.6 #7-5 explicitly chose "linter is advisory" so an operator reviewing the plan visually can override a false positive without re-running. The flag flips that contract for cases where operator review is weak or absent:
+
+- Self-managed harness-merge cycles where no human gates `plan.md` before `impl` runs.
+- Accepting a plan from an external contributor whose intent / repo familiarity isn't trusted enough to skim warnings by hand.
+
+**Behaviour on rejection:** `cmd_plan` catches the raised `PlanConsistencyError`, calls `state.finish_attempt(... note="strict consistency: <warnings>")`, and prints `plan[attempt N]: strict consistency rejected — <warnings>` to stderr. The plan phase consumes one of its two attempts (`PHASE_MAX_ATTEMPTS["plan"] = 2` is preserved), and the warnings are threaded into the next-attempt prompt as `prev_failure_log` — the planner sees them under a `# Previous attempt failed` block exactly like impl retries do, giving it one self-fix chance before the phase fails.
+
+**Command:**
+
+```bash
+python3 lib/harness/phase.py plan <slug> \
+  --intent "feat: …" --target-repo /path/to/target \
+  --strict-consistency
+```

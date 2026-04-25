@@ -139,6 +139,12 @@ _PATH_EXT_RE = re.compile(
 )
 
 
+class PlanConsistencyError(ValueError):
+    """Raised by `validate_plan_consistency` in strict mode when warnings
+    are present. Inherits from `ValueError` so callers that pre-date strict
+    mode (and only catch generic value errors) still see the failure."""
+
+
 def _extract_path_candidates(text: str) -> set[str]:
     """Pull path-shaped tokens from a chunk of plan-derived markdown.
 
@@ -154,7 +160,9 @@ def _extract_path_candidates(text: str) -> set[str]:
     return cands
 
 
-def validate_plan_consistency(plan_text: str, target_repo: Path) -> list[str]:
+def validate_plan_consistency(
+    plan_text: str, target_repo: Path, *, strict: bool = False
+) -> list[str]:
     """Cross-check `## changes` and `## out-of-scope` for path-like tokens
     that are neither declared in `## files` nor present on disk.
 
@@ -163,7 +171,9 @@ def validate_plan_consistency(plan_text: str, target_repo: Path) -> list[str]:
     placeholder path (e.g. `001-…md`) that downstream phases reproduce
     verbatim.
 
-    Lenient by design — operator can choose to fix the plan or proceed.
+    Default behaviour (`strict=False`) is lenient — operator can choose
+    to fix the plan or proceed. With `strict=True` a non-empty warning
+    list raises `PlanConsistencyError` instead of being returned.
     """
     declared = {p.lstrip("./") for p in parse_plan_files(plan_text)}
     plan_text = _strip_html_comments(plan_text)
@@ -180,6 +190,8 @@ def validate_plan_consistency(plan_text: str, target_repo: Path) -> list[str]:
                 f"## {section}: path-like token {cand!r} not in ## files "
                 f"and not present in target repo"
             )
+    if strict and warnings:
+        raise PlanConsistencyError("\n".join(warnings))
     return warnings
 
 
@@ -277,6 +289,7 @@ def build_plan_prompt(
     intent: str,
     target_repo: Path,
     approved_design: str | None = None,
+    prev_failure_log: str | None = None,
 ) -> str:
     """Compose the planner prompt.
 
@@ -286,6 +299,10 @@ def build_plan_prompt(
     rule turns its decisions into hard requirements rather than
     suggestions; concrete file path selection still belongs to the
     planner's repo inspection.
+
+    `prev_failure_log` mirrors `build_impl_prompt`: when set, the previous
+    attempt's failure tail is appended so the planner gets one self-fix
+    chance (used by `--strict-consistency` rejections).
     """
     design_block = ""
     if approved_design and approved_design.strip():
@@ -293,6 +310,15 @@ def build_plan_prompt(
             "## Approved design context (do not deviate)\n\n"
             f"{approved_design.strip()}\n\n"
             "---\n\n"
+        )
+    retry_block = ""
+    if prev_failure_log:
+        tail = prev_failure_log[-4000:]
+        retry_block = (
+            "\n\n---\n\n"
+            "# Previous attempt failed\n\n"
+            "Read this failure log and fix the cause. Do not re-do parts that already succeeded.\n\n"
+            f"```\n{tail}\n```\n"
         )
     return (
         f"{persona}\n\n"
@@ -303,6 +329,7 @@ def build_plan_prompt(
         f"Intent: {intent}\n\n"
         "Emit ONLY the plan.md content as your complete output. "
         "Do not wrap in triple backticks. Do not add preamble."
+        f"{retry_block}"
     )
 
 
@@ -483,9 +510,13 @@ def cmd_plan(args) -> int:
             "injecting as approved design context (ADR-0003)",
             file=sys.stderr,
         )
+    prev_failure_log: str | None = None
     for attempt_no in range(PHASE_MAX_ATTEMPTS["plan"]):
         attempt = state.start_attempt(s, "plan")
-        prompt = build_plan_prompt(persona, args.intent, target_repo, approved_design)
+        prompt = build_plan_prompt(
+            persona, args.intent, target_repo, approved_design,
+            prev_failure_log=prev_failure_log,
+        )
         res = runner.run_claude(
             prompt=prompt,
             cwd=target_repo,
@@ -503,16 +534,31 @@ def cmd_plan(args) -> int:
             state.finish_attempt(s, "plan", exit_code=1, note=f"validation: {err}")
             print(f"plan[attempt {attempt_no}]: validation failed — {err}", file=sys.stderr)
             continue
+        # Cross-check stale/placeholder paths in changes/out-of-scope
+        # (DESIGN §13.6 #7-5). Default warn-only; `--strict-consistency`
+        # promotes warnings to a fatal that consumes one attempt and
+        # gives the planner one self-fix chance via `prev_failure_log`.
+        try:
+            warnings = validate_plan_consistency(
+                plan_text, target_repo, strict=args.strict_consistency,
+            )
+        except PlanConsistencyError as e:
+            state.finish_attempt(
+                s, "plan", exit_code=1, note=f"strict consistency: {e}",
+            )
+            prev_failure_log = "strict consistency: " + str(e)
+            print(
+                f"plan[attempt {attempt_no}]: strict consistency rejected — {e}",
+                file=sys.stderr,
+            )
+            continue
         plan_file = state.plan_path(args.task_slug)
         plan_file.write_text(plan_text)
         state.finish_attempt(s, "plan", exit_code=0, note="ok")
         state.set_phase_status(
             s, "plan", state.STATUS_COMPLETED, final_output_path=str(plan_file)
         )
-        # Lenient cross-check — print warnings but never block the plan
-        # phase. Catches stale/placeholder paths the planner sometimes
-        # leaves in changes/out-of-scope (DESIGN §13.6 #7-5).
-        for w in validate_plan_consistency(plan_text, target_repo):
+        for w in warnings:
             print(f"plan: warn — {w}", file=sys.stderr)
         print(f"plan: OK → {plan_file}")
         return 0
@@ -1654,6 +1700,10 @@ def main() -> int:
     )
     # merge
     ap.add_argument("--dry-run", action="store_true", help="merge: evaluate gate, don't merge")
+    ap.add_argument(
+        "--strict-consistency", action="store_true", default=False,
+        help="plan: promote validate_plan_consistency warnings to fatal (default: warn-only).",
+    )
     args = ap.parse_args()
     return PHASE_CMDS[args.phase](args)
 
