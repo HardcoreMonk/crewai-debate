@@ -48,6 +48,12 @@ APPLY_RETRY_PER_COMMENT = 2  # implementer self-fix cap on a single comment
 # the run is in flight.
 RATE_LIMIT_EXTENSION_SEC = 1800
 
+
+def _extend_deadline_for_rate_limit(current_deadline: float, extension_sec: int) -> float:
+    """Extend the review-wait deadline after a rate-limit detection per §13.6 #7-8. Returns the new deadline; logging and state mutation remain the caller's responsibility. Negative `extension_sec` is clamped to 0."""
+    return current_deadline + max(0, extension_sec)
+
+
 REQUIRED_PLAN_SECTIONS = ("files", "changes", "tests", "out-of-scope")
 
 H2_RE = re.compile(r"^##\s+(.+?)\s*$")
@@ -1169,7 +1175,7 @@ def cmd_review_wait(args) -> int:
                 # the same comment seen across polls.
                 if not rate_limit_extended and coderabbit.is_rate_limit_marker(body):
                     rate_limit_extended = True
-                    deadline += RATE_LIMIT_EXTENSION_SEC
+                    deadline = _extend_deadline_for_rate_limit(deadline, RATE_LIMIT_EXTENSION_SEC)
                     note = (
                         f"CodeRabbit rate-limit detected (issue #{ic_id}); "
                         f"deadline extended by {RATE_LIMIT_EXTENSION_SEC}s"
