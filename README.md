@@ -40,6 +40,8 @@ See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-
 - `lib/harness/tests/test_body_embedded_inlines.py` — `extract_body_embedded_inlines` parser tests (12 cases covering §13.6 #12: PR #30-shaped single-file nitpick wrapper, multi-file two-file wrapper, multi-comment-per-file split on `---` HR, parse_inline_comment consumability, malformed unbalanced `<blockquote>` graceful skip, summary-without-`(N)`-suffix ignored).
 - `lib/harness/tests/test_rate_limit_helper.py` — `_extend_deadline_for_rate_limit` contract tests (3 cases covering positive extension arithmetic, negative-clamp-to-zero, zero-extension preserves deadline). Landed via the harness's third self-managed full 10-phase merge (PR #36, dogfood gen-6, see DESIGN §13.12).
 - `lib/harness/tests/test_review_fetch_body_embedded.py` — E2E mock tests for `cmd_review_fetch` §13.6 #12 fallback path (4 cases covering trigger condition, normal balance no-op, zero-actionable no-op, corrupt-input fallback returns empty). Mirrors PR-#30-shaped review body via `lib/harness/fixtures/coderabbit/review_pr30_nitpick_body.md` shared fixture.
+- `lib/harness/tests/test_rate_limit_auto_bypass_hybrid.py` — `is_incremental_decline_marker` parser tests + `_run_auto_bypass_commit_fallback` ladder tests + state setter sanity (14 cases covering §13.6 #7-8 B3-1d hybrid auto-bypass: dispatch precedence, decline-marker detection, dirty-tree skip, push-failure HEAD~1 reset, commit-failure no-push, schema rename).
+- `lib/harness/tests/test_impl_timeout_override.py` — `_resolve_impl_timeout` contract tests (6 cases covering §13.15 large-surface impl friction: flag>0, flag=0/-5 clamp to default, env="1800", env="abc" warning + default, flag+env precedence, both-None default).
 - `lib/harness/fixtures/coderabbit/review_pr30_nitpick_body.md` — recorded CodeRabbit response sample (PR #30 nitpick-body shape) shared between `test_body_embedded_inlines.py` (parser unit) and `test_review_fetch_body_embedded.py` (cmd_review_fetch integration). Single source of truth + drift tracker.
 - `lib/harness/fixtures/coderabbit/*.json` — reference CodeRabbit payloads for parser self-test.
 
@@ -194,6 +196,9 @@ lib/
       test_body_embedded_inlines.py       # extract_body_embedded_inlines tests (§13.6 #12)
       test_rate_limit_helper.py           # _extend_deadline_for_rate_limit contract tests (PR #36 dogfood gen-6)
       test_review_fetch_body_embedded.py  # cmd_review_fetch §13.6 #12 fallback E2E mock tests (PR #38 dogfood gen-7)
+      test_rate_limit_auto_bypass.py      # B3-1b auto-bypass integration tests (§13.6 #7-8 PR #40)
+      test_rate_limit_auto_bypass_hybrid.py  # B3-1d hybrid dispatch + decline marker tests (§13.6 #7-8 PR #41)
+      test_impl_timeout_override.py       # _resolve_impl_timeout contract tests (§13.15 PR #45)
 docs/
   adr/                     # Architecture Decision Records (2026-04-25)
     README.md              # ADR convention + index
