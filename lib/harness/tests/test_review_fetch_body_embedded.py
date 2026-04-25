@@ -30,8 +30,19 @@ PR30_BODY = (_LIB / "fixtures" / "coderabbit" / "review_pr30_nitpick_body.md").r
 
 @pytest.fixture
 def phase_with_state_root(tmp_path, monkeypatch):
-    """Reload state.py + phase.py with HARNESS_STATE_ROOT pinned to tmp_path."""
+    """Reload state.py + phase.py with HARNESS_STATE_ROOT pinned to tmp_path.
+
+    Saves and restores `sys.modules` entries for `state`, `harness_state`,
+    and `harness_phase` so the tmp-path-bound modules don't leak into other
+    tests in the same pytest run (would otherwise cause order-dependent
+    failures when subsequent tests load the real state.py).
+    """
     monkeypatch.setenv("HARNESS_STATE_ROOT", str(tmp_path / "state"))
+    original_modules = {
+        "state": sys.modules.get("state"),
+        "harness_state": sys.modules.get("harness_state"),
+        "harness_phase": sys.modules.get("harness_phase"),
+    }
     sys.modules.pop("state", None)
     sys.modules.pop("harness_state", None)
     sys.modules.pop("harness_phase", None)
@@ -46,7 +57,14 @@ def phase_with_state_root(tmp_path, monkeypatch):
     sys.modules["harness_phase"] = phase_mod
     spec_phase.loader.exec_module(phase_mod)
 
-    return phase_mod, state_mod
+    try:
+        yield phase_mod, state_mod
+    finally:
+        for name, mod in original_modules.items():
+            if mod is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = mod
 
 
 def _setup_review_state(state_mod, slug: str, *, actionable: int) -> dict:
