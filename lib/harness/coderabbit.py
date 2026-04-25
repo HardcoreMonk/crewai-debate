@@ -323,6 +323,111 @@ def filter_bot_comments(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [c for c in comments if is_coderabbit_author(c.get("user"))]
 
 
+# ---- body-embedded inline extraction (DESIGN §13.6 #12) ----
+
+
+# A file-level block inside the nitpick wrapper. The summary's `(N)` suffix
+# is the load-bearing marker — non-file `<details>` (severity blocks, AI prompt
+# blocks, suggested-cleanup blocks) never carry that suffix, so this regex
+# reliably identifies file boundaries without false matches on nested details.
+_NITPICK_FILE_START_RE = re.compile(
+    r"<details>\s*<summary>(?P<path>[^<\n]+?)\s*\((?P<count>\d+)\)\s*</summary>\s*<blockquote>",
+    re.IGNORECASE,
+)
+
+
+def _find_balanced_blockquote_close(text: str, start: int) -> int:
+    """Given an index just past a `<blockquote>` open tag, return the index
+    of the matching `</blockquote>` close (the position of the `<` character).
+    Returns -1 when unbalanced. Handles arbitrary `<blockquote>`/`</blockquote>`
+    nesting which CodeRabbit nitpick wrappers exercise routinely.
+    """
+    depth = 1
+    i = start
+    while i < len(text):
+        nxt_open = text.find("<blockquote>", i)
+        nxt_close = text.find("</blockquote>", i)
+        if nxt_close == -1:
+            return -1
+        if nxt_open != -1 and nxt_open < nxt_close:
+            depth += 1
+            i = nxt_open + len("<blockquote>")
+        else:
+            depth -= 1
+            if depth == 0:
+                return nxt_close
+            i = nxt_close + len("</blockquote>")
+    return -1
+
+
+def extract_body_embedded_inlines(review_body: str) -> list[dict[str, Any]]:
+    """Synthesise GitHub-PR-comment-shaped dicts from a CodeRabbit nitpick-only
+    review body that carries its suggestions inside `<details>` blocks rather
+    than as line-level review comments (DESIGN §13.6 #12).
+
+    Returns an empty list when the body has no nitpick wrapper, so callers can
+    safely union the result with the inline-comments endpoint output:
+    `inline + extract_body_embedded_inlines(body)`.
+
+    Each returned dict carries:
+      - `id`: synthetic negative integer (-1, -2, ...) to mark non-API origin
+      - `path`: extracted from the per-file `<details><summary>path (N)</summary>` header
+      - `body`: the per-comment markdown chunk (suitable for `parse_inline_comment`)
+      - `user`: `{"login": "coderabbitai[bot]"}` so `is_coderabbit_author` accepts it
+      - `created_at`: empty string (no GitHub timestamp available)
+      - `start_line` / `line`: None — `parse_inline_comment` will fall back to the
+        in-body `` `<range>`: `` marker
+    """
+    if not review_body:
+        return []
+    if not NITPICK_ONLY_RE.search(review_body):
+        return []
+
+    out: list[dict[str, Any]] = []
+    synthetic_id = -1
+    pos = 0
+    while True:
+        m = _NITPICK_FILE_START_RE.search(review_body, pos)
+        if m is None:
+            break
+        # Skip the outer "🧹 Nitpick comments (N)" wrapper itself — its summary
+        # is a label, not a path. Heuristic: real file paths contain `/` or `.`,
+        # the wrapper label contains neither.
+        path = m.group("path").strip()
+        if "/" not in path and "." not in path:
+            pos = m.end()
+            continue
+
+        body_start = m.end()
+        body_end = _find_balanced_blockquote_close(review_body, body_start)
+        if body_end == -1:
+            # Malformed wrapper — give up on remaining matches rather than
+            # emit corrupt synthetic comments. Caller still gets what we
+            # extracted up to this point.
+            break
+
+        block_body = review_body[body_start:body_end].strip()
+
+        # Multi-comment per file is separated by a horizontal rule (`\n---\n`)
+        # in CodeRabbit's wrapper. Single-comment files have no separator.
+        chunks = [c.strip() for c in re.split(r"\n\s*-{3,}\s*\n", block_body) if c.strip()]
+        for chunk in chunks:
+            out.append({
+                "id": synthetic_id,
+                "path": path,
+                "body": chunk,
+                "user": {"login": "coderabbitai[bot]"},
+                "created_at": "",
+                "start_line": None,
+                "line": None,
+            })
+            synthetic_id -= 1
+
+        pos = body_end + len("</blockquote>")
+
+    return out
+
+
 # ---- fixture-driven self-test ----
 
 

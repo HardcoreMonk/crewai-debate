@@ -1276,6 +1276,48 @@ def cmd_review_fetch(args) -> int:
 
     bot_comments = coderabbit.filter_bot_comments(raw)
 
+    # §13.6 #12 — body-embedded suggestion fallback. When review-wait recorded
+    # actionable_count > 0 but the inline-comments endpoint returned fewer
+    # bot comments than that count, CodeRabbit packed the missing
+    # suggestion(s) inside the review body's `<details>` blocks rather than
+    # as line-level comments. Synthesise the missing ones from the body.
+    actionable = int(s["phases"]["review-wait"].get("actionable_count") or 0)
+    if actionable > len(bot_comments):
+        try:
+            reviews = gh.list_reviews(base_repo, pr_number)
+        except gh.GhError as e:
+            reviews = []
+            print(
+                f"review-fetch: warning — body-embedded fallback skipped: list_reviews failed ({e})",
+                file=sys.stderr,
+            )
+        bot_reviews = [
+            r for r in reviews if coderabbit.is_coderabbit_author(r.get("user"))
+        ]
+        latest_body = ""
+        if bot_reviews:
+            # Pick the review whose id matches the recorded review_id;
+            # fall back to newest by submitted_at.
+            target_id = int(s["phases"]["review-wait"].get("review_id") or 0)
+            target = next(
+                (r for r in bot_reviews if int(r.get("id") or 0) == target_id),
+                None,
+            )
+            if target is None:
+                target = max(
+                    bot_reviews,
+                    key=lambda r: r.get("submitted_at") or "",
+                )
+            latest_body = target.get("body") or ""
+        embedded = coderabbit.extract_body_embedded_inlines(latest_body)
+        if embedded:
+            bot_comments = list(bot_comments) + embedded
+            print(
+                f"review-fetch: synthesised {len(embedded)} body-embedded "
+                f"suggestion(s) from review body (§13.6 #12)",
+                file=sys.stderr,
+            )
+
     # GraphQL-based resolution (authoritative over body markers).
     try:
         thread_res = gh.list_review_thread_resolutions(base_repo, pr_number)
