@@ -1182,6 +1182,88 @@ def cmd_review_wait(args) -> int:
                     )
                     print(f"review-wait: {note}", file=sys.stderr)
                     logf.write(f"poll {poll_count}: {note}\n")
+                    # §13.6 #7-8 follow-up B3-1b — opt-in auto-bypass.
+                    # When the operator opted in, push an empty commit so
+                    # CodeRabbit re-reviews on a fresh SHA. Guarded so we
+                    # never push twice in one invocation. Failures (dirty
+                    # tree or push exit != 0) degrade gracefully to the
+                    # deadline-only fallback already applied above.
+                    auto_bypass_opt_in = (
+                        getattr(args, "rate_limit_auto_bypass", False)
+                        or os.environ.get("HARNESS_RATE_LIMIT_AUTO_BYPASS") == "1"
+                    )
+                    already_pushed = s["phases"]["review-wait"].get(
+                        "auto_bypass_pushed", False
+                    )
+                    if auto_bypass_opt_in and not already_pushed:
+                        target_repo = Path(s["target_repo"])
+                        branch = s.get("head_branch") or ""
+                        status_proc = git(target_repo, "status", "--porcelain")
+                        dirty = status_proc.stdout.strip()
+                        if dirty:
+                            n_dirty = len([ln for ln in dirty.splitlines() if ln.strip()])
+                            skip_msg = (
+                                f"auto-bypass skipped: target repo is dirty "
+                                f"({n_dirty} uncommitted changes), falling back "
+                                f"to deadline extension only"
+                            )
+                            print(f"review-wait: {skip_msg}", file=sys.stderr)
+                            logf.write(f"poll {poll_count}: {skip_msg}\n")
+                        else:
+                            commit_proc = git(
+                                target_repo,
+                                "commit", "--allow-empty",
+                                "-m",
+                                "harness: trigger CodeRabbit re-review "
+                                "(§13.6 #7-8 auto-bypass) [B3-1b auto-bypass]",
+                            )
+                            if commit_proc.returncode != 0:
+                                fail_msg = (
+                                    f"auto-bypass commit failed (exit="
+                                    f"{commit_proc.returncode}): "
+                                    f"{(commit_proc.stderr or '').strip()[-200:]}; "
+                                    f"falling back to deadline extension only"
+                                )
+                                print(
+                                    f"review-wait: {fail_msg}",
+                                    file=sys.stderr,
+                                )
+                                logf.write(f"poll {poll_count}: {fail_msg}\n")
+                            else:
+                                new_sha = git(
+                                    target_repo, "rev-parse", "HEAD",
+                                ).stdout.strip()
+                                push = push_branch_via_gh_token(target_repo, branch)
+                                if push.returncode != 0:
+                                    push_tail = (push.stderr or "").strip()[-200:]
+                                    fail_msg = (
+                                        f"auto-bypass push failed (exit="
+                                        f"{push.returncode}): {push_tail}; "
+                                        f"falling back to deadline extension only"
+                                    )
+                                    print(
+                                        f"review-wait: {fail_msg}",
+                                        file=sys.stderr,
+                                    )
+                                    logf.write(f"poll {poll_count}: {fail_msg}\n")
+                                else:
+                                    ok_msg = (
+                                        f"auto-bypass — pushed empty commit "
+                                        f"{new_sha} to {branch}; CodeRabbit "
+                                        f"will fresh-review on new SHA"
+                                    )
+                                    print(
+                                        f"review-wait: {ok_msg}",
+                                        file=sys.stderr,
+                                    )
+                                    logf.write(
+                                        f"poll {poll_count}: auto_bypass: "
+                                        f"pushed={new_sha}\n"
+                                    )
+                                    s["phases"]["review-wait"][
+                                        "auto_bypass_pushed"
+                                    ] = True
+                                    state.save_state(s)
                 sig = coderabbit.classify_review_body(body)
                 if sig.kind in ("skipped", "failed", "complete"):
                     if issue_sig is None or (ic.get("created_at") or "") > (getattr(issue_sig, "submitted_at", "") or ""):
@@ -1751,6 +1833,18 @@ def main() -> int:
     ap.add_argument(
         "--strict-consistency", action="store_true", default=False,
         help="plan: promote validate_plan_consistency warnings to fatal (default: warn-only).",
+    )
+    # review-wait — opt-in auto-bypass for CodeRabbit free-plan rate limits
+    # (DESIGN §13.6 #7-8 follow-up B3-1b). When set, on rate-limit detection
+    # the harness pushes an empty commit so CodeRabbit fresh-reviews on a new
+    # SHA. Off by default — pushing has visible side effects on the PR.
+    # `HARNESS_RATE_LIMIT_AUTO_BYPASS=1` in the environment is an equivalent
+    # opt-in for callers that cannot pass CLI flags.
+    ap.add_argument(
+        "--rate-limit-auto-bypass", action="store_true", default=False,
+        help="review-wait: on CodeRabbit rate-limit, push an empty commit to "
+             "trigger a fresh review (default: off). Env-var fallback: "
+             "HARNESS_RATE_LIMIT_AUTO_BYPASS=1. See §13.6 #7-8.",
     )
     args = ap.parse_args()
     return PHASE_CMDS[args.phase](args)

@@ -153,6 +153,7 @@ def init_review_state(
             "review-wait": {
                 "status": STATUS_PENDING, "attempts": [],
                 "review_id": None, "review_sha": None, "actionable_count": None,
+                "auto_bypass_pushed": False,
             },
             "review-fetch": {
                 "status": STATUS_PENDING, "attempts": [],
