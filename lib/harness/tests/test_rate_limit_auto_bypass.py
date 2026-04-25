@@ -198,8 +198,13 @@ def test_flag_on_clean_tree_pushes_empty_commit(env, monkeypatch):
 
 
 def test_flag_on_dirty_tree_skips(env, monkeypatch, capsys):
+    """§13.6 #16: only tracked-modified files count as dirty for the
+    auto-bypass guard. Untracked files are deliberately ignored (they
+    don't represent in-flight harness edits)."""
     repo, phase_mod, state_mod = env["repo"], env["phase"], env["state"]
-    (repo / "untracked.txt").write_text("dirty\n")
+    # Modify a tracked file so the repo is "dirty" in the post-#16 sense.
+    tracked = repo / "b.txt"
+    tracked.write_text(tracked.read_text() + "dirty\n")
     _install_gh(
         monkeypatch, phase_mod,
         reviews=[_complete_review()],
@@ -222,6 +227,39 @@ def test_flag_on_dirty_tree_skips(env, monkeypatch, capsys):
 
     s = state_mod.load_state("ab-dirty")
     assert s["phases"]["review-wait"]["auto_bypass_commit_pushed"] is False
+
+
+def test_flag_on_untracked_only_does_not_skip(env, monkeypatch, capsys):
+    """§13.6 #16 regression: a target repo with only untracked files
+    (operator scratch, .bak files, build artifacts) must NOT short-circuit
+    the auto-bypass — those files are orthogonal to harness work."""
+    repo, phase_mod, state_mod = env["repo"], env["phase"], env["state"]
+    (repo / "untracked.txt").write_text("scratch\n")
+    (repo / "graphify-out").mkdir()
+    (repo / "graphify-out" / "report.md").write_text("\n")
+    _install_gh(
+        monkeypatch, phase_mod,
+        reviews=[_complete_review()],
+        issues=[_rate_limit_issue()],
+    )
+    push_calls = []
+    monkeypatch.setattr(
+        phase_mod, "push_branch_via_gh_token",
+        lambda r, b: (push_calls.append((r, b)) or _ok_push()),
+    )
+    pre = _commit_count(repo)
+
+    rc = phase_mod.cmd_review_wait(_ns("ab-untracked-ok", repo, auto_bypass=True))
+    assert rc == 0
+    # Auto-bypass should have proceeded — marker commit pushed despite untracked.
+    assert _commit_count(repo) == pre + 1
+    assert len(push_calls) == 1
+
+    err = capsys.readouterr().err
+    assert "auto-bypass skipped: target repo is dirty" not in err
+
+    s = state_mod.load_state("ab-untracked-ok")
+    assert s["phases"]["review-wait"]["auto_bypass_commit_pushed"] is True
 
 
 # ---- (4) flag on + state pre-seeded auto_bypass_commit_pushed=True → no-op ----

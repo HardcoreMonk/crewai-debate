@@ -86,11 +86,9 @@ def _build_review_state(
         for _ in range(round_no - 1):
             state_mod.bump_round(s)
     if marker_pushed:
-        s["phases"]["review-wait"]["auto_bypass_commit_pushed"] = True
+        state_mod.set_auto_bypass_pushed(s)
     if manual_attempted:
-        s["phases"]["review-wait"]["auto_bypass_manual_attempted"] = True
-    if marker_pushed or manual_attempted:
-        state_mod.save_state(s)
+        state_mod.set_auto_bypass_manual_attempted(s, comment_id=None)
     return s
 
 
