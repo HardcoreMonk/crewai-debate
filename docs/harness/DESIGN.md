@@ -735,3 +735,68 @@ auto = (not is_resolved) and (
 ### 14.9 배제된 자산 (Tier 3 — DESIGN §2와 일치)
 
 `skills/crewai-debate/`, `skills/crew-master/`, `skills/hello-debate/`, `lib/crew-dispatch.sh`, `crew/CHANNELS.local.md`, `crew/personas/{coder,critic,ue-expert}.md`는 harness 경로에서 **참조하지 않음**. debate 트랙은 별도로 유지 운용.
+
+> **2026-04-25 갱신**: §15 (debate ↔ harness bridge) 도입으로 **`skills/crewai-debate-harness/`만 예외**. 이 새 skill은 debate 트랙의 `crewai-debate` v3 단일턴 패턴을 그대로 차용하면서 harness `state/harness/<slug>/design.md` sidecar를 작성. §14의 "배제" 원칙은 *기존* debate 자산에 한해 유효 — bridge skill은 의도된 통합 surface로 분리 카탈로그됨. ADR-0003 참조.
+
+---
+
+## 15. Debate ↔ Harness Bridge (ADR-0003)
+
+§14까지의 As-built는 두 트랙을 **자산 공유 + 런타임 분리**로 두고 있었지만, Model A 검증 사이클(2026-04-25, gc.py `--older-than` dogfood)에서 8 design point 중 5건이 debate APPROVED 결과와 planner plan.md 사이에서 어긋남을 정량 확인. 1-line `--intent`로 컨텍스트가 압축되면서 컨버전스된 설계 nuance가 소실되는 구조적 한계가 드러남. ADR-0003에서 **per-task `design.md` sidecar** 메커니즘으로 이를 해결.
+
+### 15.1 흐름
+
+```
+[Operator terminal / Claude Code]
+        │
+        ▼
+  crewai-debate-harness skill
+   (Dev↔Reviewer 단일턴 + Bash sidecar 작성)
+        │
+        ▼
+  state/harness/<slug>/design.md
+        │
+        ▼ (operator manually invokes)
+  python3 lib/harness/phase.py plan <slug> \
+    --intent "..." --target-repo ...
+        │
+        ▼
+  cmd_plan ──► _read_design_sidecar() ──► build_plan_prompt(approved_design=...)
+        │
+        ▼
+  planner persona ── Approved design context (do not deviate) 준수 ──► plan.md
+        │
+        ▼ (이후는 §14의 표준 phase 시퀀스)
+  impl → commit → adr → pr-create → review-* → merge
+```
+
+### 15.2 컴포넌트별 책임
+
+| Layer | 컴포넌트 | 추가 책임 |
+|---|---|---|
+| Skill | `skills/crewai-debate-harness/SKILL.md` | 단일턴 debate 실행 + 종료 후 Bash로 sidecar 작성. **Discord 사용 금지** (delivery layer drop). 기본 refuse-on-overwrite. |
+| State | `state/harness/<slug>/design.md` | sidecar 파일. gitignored. 사람이 직접 작성·편집 가능 (skill 외부에서) |
+| Phase CLI | `lib/harness/phase.py::cmd_plan` | `_read_design_sidecar()`로 sidecar 자동 감지. 있으면 stderr에 알림 + planner prompt에 inject |
+| Phase 헬퍼 | `lib/harness/phase.py::build_plan_prompt(approved_design=...)` | 옵션 파라미터, 비어있으면 pre-ADR 행동 그대로 |
+| State init | `lib/harness/state.py::init_state` | `mkdir(exist_ok=True)`로 완화 — bridge skill이 디렉토리를 먼저 만든 case 허용 |
+| Persona | `crew/personas/planner.md` | "Approved design context (do not deviate)" 헤더가 있으면 load-bearing constraint로 처리. 모순 시 STOP + 산문 에러 |
+
+### 15.3 호환성
+
+- sidecar 없으면 cmd_plan은 ADR-0003 이전 동작 100% 동일 (regression 0)
+- 기존 `phase.py plan` 직접 호출자(skill 미사용)에게 영향 없음
+- `init_state`의 dir-strict 가드 완화는 `state.json` 존재 검사가 진짜 가드이므로 안전
+
+### 15.4 비목표
+
+- Discord에서 직접 bridge 트리거 — out of scope (별도 ADR 필요)
+- 다중 design.md (한 슬러그에 여러 design 라운드) — refuse-on-overwrite로 명시 거부
+- skill이 phase.py를 직접 호출 — 의도적 분리, operator가 plan 단계 트리거
+
+### 15.5 검증 마일스톤
+
+- [x] PR #25: cmd_plan + build_plan_prompt + state.init_state 완화 (110 tests)
+- [x] PR #26: planner 페르소나 갱신
+- [x] PR #27: crewai-debate-harness skill 신설
+- [ ] PR #28: 본 §15 + RUNBOOK 갱신 (this PR)
+- [ ] PR #29: gc.py `--older-than` validation re-run — Model A의 5/8 divergence가 0 또는 거의 0으로 떨어지는지 확인. 떨어지면 ADR-0003 효력 입증, 아니면 페르소나/prompt 조정 follow-up
