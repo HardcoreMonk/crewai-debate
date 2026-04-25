@@ -459,9 +459,26 @@ def push_branch_via_gh_token(repo: Path, branch: str) -> subprocess.CompletedPro
 
 
 def ensure_clean_repo(repo: Path) -> None:
-    st = git(repo, "status", "--porcelain").stdout.strip()
-    if st:
-        fatal(f"target repo not clean:\n{st}\nCommit or stash before running impl.")
+    """Refuse to run if the working tree has tracked-but-modified files.
+
+    Untracked files are deliberately ignored (§13.6 #16): scratch backups,
+    rotated env files, build artifacts, and operator-created `.bak-*` files
+    are common in real target repos and don't represent in-flight edits the
+    harness could overwrite. impl/review-apply always commits its own
+    changes, so leaving untracked files alone is safe.
+
+    `git status --porcelain` lines for tracked-but-modified files start with
+    M/A/D/R/C/U in either column; untracked entries start with `??`. We
+    drop the `??` lines and fatal-exit only if anything else remains.
+    """
+    raw = git(repo, "status", "--porcelain").stdout
+    tracked_changes = [
+        line for line in raw.splitlines()
+        if line and not line.startswith("??")
+    ]
+    if tracked_changes:
+        joined = "\n".join(tracked_changes)
+        fatal(f"target repo not clean:\n{joined}\nCommit or stash before running impl.")
 
 
 def _current_branch(repo: Path) -> str:
