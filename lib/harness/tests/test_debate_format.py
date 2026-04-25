@@ -152,6 +152,42 @@ HISTORY_SUMMARY:
 """)
 
 
+CANONICAL_3_BULLET_REQUEST_CHANGES = dedent("""\
+🚀 crewai-debate v3 — topic: refactor Y (max_iter=6)
+
+### Developer — iter 1
+- approach A
+
+### Reviewer — iter 1
+REQUEST_CHANGES:
+- **issue 1**: not safe
+- **issue 2**: missing test
+- **issue 3**: poor naming
+
+### Developer — iter 2
+- approach B
+
+### Reviewer — iter 2
+APPROVED: now correct
+
+=== crewai-debate result ===
+TOPIC: refactor Y
+STATUS: CONVERGED
+ITERATIONS: 2/6
+
+FINAL_DRAFT (iter 2):
+- approach B
+
+FINAL_VERDICT:
+APPROVED: now correct
+
+HISTORY_SUMMARY:
+- iter 1: REQUEST_CHANGES on safety + test + naming
+- iter 2: APPROVED
+===
+""")
+
+
 # ---- parser ----
 
 
@@ -287,6 +323,13 @@ def test_multi_iter_request_changes_then_approve():
     p = parse_debate_transcript(CANONICAL_MULTI_ITER_REQUEST_CHANGES)
     assert p["iterations"] == 2
     assert p["status_converged"] is True
+
+
+def test_three_bullet_request_changes_parses():
+    p = parse_debate_transcript(CANONICAL_3_BULLET_REQUEST_CHANGES)
+    assert p["iterations"] == 2
+    assert p["status_converged"] is True
+    assert p["slug"] is None
 
 
 def test_missing_closing_triple_equals_fails():
