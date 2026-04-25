@@ -586,6 +586,32 @@ def cmd_plan(args) -> int:
     return 1  # unreachable
 
 
+def _resolve_impl_timeout(args) -> int:
+    """Resolve the effective impl-phase timeout: CLI > env > default."""
+    cli_val = getattr(args, "impl_timeout", None)
+    if cli_val is not None:
+        return cli_val
+    raw = os.environ.get("HARNESS_IMPL_TIMEOUT")
+    default = PHASE_TIMEOUTS["impl"]
+    if raw is None:
+        return default
+    try:
+        parsed = int(raw)
+    except ValueError:
+        print(
+            f"impl: warn — HARNESS_IMPL_TIMEOUT={raw} ignored, using default {default}s",
+            file=sys.stderr,
+        )
+        return default
+    if parsed <= 0:
+        print(
+            f"impl: warn — HARNESS_IMPL_TIMEOUT={raw} ignored, using default {default}s",
+            file=sys.stderr,
+        )
+        return default
+    return parsed
+
+
 def cmd_impl(args) -> int:
     s = state.load_state(args.task_slug)
     if s["phases"]["plan"]["status"] != state.STATUS_COMPLETED:
@@ -606,6 +632,7 @@ def cmd_impl(args) -> int:
     ensure_clean_repo(target_repo)
     persona = read_persona("implementer")
     prev_failure_log: str | None = None
+    effective_timeout = _resolve_impl_timeout(args)
 
     for attempt_no in range(PHASE_MAX_ATTEMPTS["impl"]):
         if attempt_no > 0:
@@ -616,7 +643,7 @@ def cmd_impl(args) -> int:
             prompt=prompt,
             cwd=target_repo,
             log_path=Path(attempt["log_path"]),
-            timeout_sec=PHASE_TIMEOUTS["impl"],
+            timeout_sec=effective_timeout,
         )
         if res.partial:
             note = f"claude exit={res.exit_code} timeout={res.timed_out}"
@@ -639,10 +666,10 @@ def cmd_impl(args) -> int:
         try:
             tests_proc = subprocess.run(
                 tests_cmd, shell=True, cwd=str(target_repo),
-                capture_output=True, text=True, timeout=PHASE_TIMEOUTS["impl"],
+                capture_output=True, text=True, timeout=effective_timeout,
             )
         except subprocess.TimeoutExpired:
-            note = f"tests timed out after {PHASE_TIMEOUTS['impl']}s"
+            note = f"tests timed out after {effective_timeout}s"
             state.finish_attempt(s, "impl", exit_code=124, note=note)
             prev_failure_log = note
             continue
@@ -1949,6 +1976,12 @@ def main() -> int:
         help="review-wait: on CodeRabbit rate-limit, push an empty commit to "
              "trigger a fresh review (default: off). Env-var fallback: "
              "HARNESS_RATE_LIMIT_AUTO_BYPASS=1. See §13.6 #7-8.",
+    )
+    ap.add_argument(
+        "--impl-timeout", type=int, default=None,
+        help="impl: override the impl-phase timeout in seconds (default: "
+             f"{PHASE_TIMEOUTS['impl']}). Env-var fallback: "
+             "HARNESS_IMPL_TIMEOUT=<int seconds>.",
     )
     args = ap.parse_args()
     return PHASE_CMDS[args.phase](args)
