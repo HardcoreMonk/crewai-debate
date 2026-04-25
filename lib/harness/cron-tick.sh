@@ -70,7 +70,7 @@ try:
     print(f'export NEXT_PHASE={shlex.quote(obj.get(\"next_phase\", \"\"))}')
     print(f'export SLUG={shlex.quote(obj.get(\"slug\", \"\"))}')
     print(f'export CMD={shlex.quote(obj.get(\"command\", \"\"))}')
-except (json.JSONDecodeError, KeyError):
+except json.JSONDecodeError:
     print('export NEXT_PHASE=')
     print('export SLUG=')
     print('export CMD=')
@@ -101,10 +101,6 @@ except (json.JSONDecodeError, KeyError):
     # systemd unit invocation lifetime.
     setsid nohup bash -c "$CMD $EXTRA_FLAGS" >>"$LOG" 2>&1 </dev/null &
     fired=$((fired + 1))
-    # Brief gap between fires so the LOG line ordering stays readable
-    # and the spawned children don't all hit GitHub API in the same
-    # microsecond.
-    sleep 1
 done < <(python3 lib/harness/sweep.py --json 2>&1)
 
 printf '%s cron-tick: scan done (considered=%d fired=%d skipped=%d)\n' \

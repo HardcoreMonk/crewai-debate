@@ -309,6 +309,40 @@ def test_set_auto_bypass_pushed_marks_state(phase_module, tmp_path):
     assert s_reload["phases"]["review-wait"]["auto_bypass_manual_attempted"] is False
 
 
+def test_is_auto_bypass_pushed_prefers_new_key(phase_module, tmp_path):
+    """Regression: bump_round resets `auto_bypass_commit_pushed=False` for
+    round 2. If a migrated state.json still carried `auto_bypass_pushed=True`,
+    a naive OR-fallback would mis-report True after the reset and suppress
+    the fallback push on subsequent rounds. Must prefer the new key when
+    present, only fall back when absent."""
+    phase, state_mod = phase_module
+    target_repo = tmp_path / "target"
+    target_repo.mkdir()
+    s = _seed_review_state(state_mod, "marker-3", target_repo)
+    rw = s["phases"]["review-wait"]
+
+    # New key explicit False, legacy key absent → False
+    rw["auto_bypass_commit_pushed"] = False
+    rw.pop("auto_bypass_pushed", None)
+    assert state_mod.is_auto_bypass_pushed(s) is False
+
+    # New key explicit False, legacy key True (migrated payload) → still False
+    # (the bug pre-fix: would have returned True via OR fallback)
+    rw["auto_bypass_commit_pushed"] = False
+    rw["auto_bypass_pushed"] = True
+    assert state_mod.is_auto_bypass_pushed(s) is False
+
+    # New key absent (true legacy state.json), legacy key True → True
+    rw.pop("auto_bypass_commit_pushed", None)
+    rw["auto_bypass_pushed"] = True
+    assert state_mod.is_auto_bypass_pushed(s) is True
+
+    # New key True, legacy irrelevant → True
+    rw["auto_bypass_commit_pushed"] = True
+    rw["auto_bypass_pushed"] = False
+    assert state_mod.is_auto_bypass_pushed(s) is True
+
+
 def test_init_state_default_both_booleans_false(phase_module, tmp_path):
     """Schema sanity: a fresh review state initialises both new booleans
     to False, so dispatch logic can safely `.get(..., False)`."""

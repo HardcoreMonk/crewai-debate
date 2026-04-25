@@ -52,10 +52,12 @@ def _setup_fixture(tmp_path: Path, *, with_phase_stub: bool = True) -> Path:
     plus state/harness/."""
     lib_harness = tmp_path / "lib" / "harness"
     lib_harness.mkdir(parents=True)
-    # Copy sweep.py + cron-tick.sh from the real repo so their behaviour
-    # is exercised end-to-end. cron-tick.sh's HARNESS_REPO_ROOT override
-    # makes this isolation possible without touching the live state.
+    # Copy sweep.py + state.py + cron-tick.sh from the real repo so their
+    # behaviour is exercised end-to-end. cron-tick.sh's HARNESS_REPO_ROOT
+    # override makes this isolation possible without touching the live state.
+    # state.py is required because sweep.py imports it for phase/status constants.
     shutil.copy(_LIB / "sweep.py", lib_harness / "sweep.py")
+    shutil.copy(_LIB / "state.py", lib_harness / "state.py")
     shutil.copy(_LIB / "cron-tick.sh", lib_harness / "cron-tick.sh")
     (lib_harness / "cron-tick.sh").chmod(0o755)
     if with_phase_stub:
