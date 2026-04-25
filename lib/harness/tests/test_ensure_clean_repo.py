@@ -1,42 +1,11 @@
 """Tests for `ensure_clean_repo` — §13.6 #16 untracked-files relaxation."""
 from __future__ import annotations
 
-import importlib.util
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-_HERE = Path(__file__).resolve().parent
-_LIB = _HERE.parent
-sys.path.insert(0, str(_LIB))
-
-
-@pytest.fixture
-def phase_mod():
-    for name in ("state", "phase"):
-        sys.modules.pop(name, None)
-    state_spec = importlib.util.spec_from_file_location("state", _LIB / "state.py")
-    state_mod = importlib.util.module_from_spec(state_spec)
-    sys.modules["state"] = state_mod
-    state_spec.loader.exec_module(state_mod)
-
-    spec = importlib.util.spec_from_file_location("phase", _LIB / "phase.py")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["phase"] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _init_repo(tmp_path: Path) -> Path:
-    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
-    (tmp_path / "tracked.txt").write_text("baseline\n")
-    subprocess.run(["git", "-C", str(tmp_path), "add", "tracked.txt"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "init"], check=True)
-    return tmp_path
+from conftest import git_in, init_repo as _init_repo
 
 
 def test_passes_when_tree_is_clean(phase_mod, tmp_path):
@@ -68,7 +37,7 @@ def test_rejects_modified_tracked_file(phase_mod, tmp_path, capsys):
 def test_rejects_staged_tracked_change(phase_mod, tmp_path):
     repo = _init_repo(tmp_path)
     (repo / "tracked.txt").write_text("staged\n")
-    subprocess.run(["git", "-C", str(repo), "add", "tracked.txt"], check=True)
+    git_in(repo, "add", "tracked.txt")
     with pytest.raises(SystemExit):
         phase_mod.ensure_clean_repo(repo)
 
