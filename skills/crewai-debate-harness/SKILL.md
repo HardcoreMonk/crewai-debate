@@ -39,12 +39,22 @@ Extract from the operator's kickoff message:
 - `slug` (required): the harness task slug under which `state/harness/<slug>/design.md` will be written. Match the slug regex `[a-z][a-z0-9_-]{0,62}` (same convention `phase.py` uses).
 - `topic` (required): the coding task to debate.
 - `max_iter` (optional, default 6).
+- `auto-plan` (optional, default `no`): when `yes`, after the sidecar write the skill ALSO runs `python3 lib/harness/phase.py plan <slug> --intent <intent> --target-repo <target>` and appends the plan output to the response. Requires `intent=` and `target=` to be present elsewhere in the same kickoff message. Without those, the skill emits `bridge: refused — auto-plan: yes requires intent= and target= fields` and stops at the sidecar write.
 
 Trigger patterns (case-insensitive on the first line; whichever comes first wins):
 
 - `debate-harness: <slug>: <topic>`
 - `bridge: <slug>: <topic>`
 - `bridge-debate <slug>: <topic>`
+
+Auto-plan example (kickoff message body):
+
+```
+debate-harness: my-task: should we add --foo with default 0 or 1?
+auto-plan: yes
+intent: feat: add --foo with conservative default 0
+target: /data/projects/claude-zone/crewai
+```
 
 If the slug is missing/invalid or the topic is empty/placeholder, ask for the missing piece and STOP — do NOT debate or write a file.
 
@@ -86,7 +96,14 @@ HISTORY_SUMMARY:
 bridge: design.md written → <absolute path>
 ```
 
-Note: unlike pure `crewai-debate`, the trailing Bash call AND the confirmation line are both **expected** in this skill, BECAUSE this skill is terminal-only by design. The Discord-drop hazard does not apply.
+**If `auto-plan: yes` was set**, follow the sidecar write with another Bash call to `python3 <repo-root>/lib/harness/phase.py plan <slug> --intent "<intent>" --target-repo "<target>"`. Capture stdout+stderr. Append exactly one of:
+
+- On success: `bridge: plan completed → <repo-root>/state/harness/<slug>/plan.md` plus the planner's stderr lines (the `plan: design.md sidecar detected …` message and any consistency warnings).
+- On failure: `bridge: plan FAILED — <last-stderr-line>; sidecar still written, retry manually with phase.py plan <slug>`. The sidecar is preserved so the operator can re-run.
+
+The chain stops at plan — impl, commit, pr-create, and the rest stay operator-driven by design (those phases have non-trivial side effects, so silently chaining would surprise operators who want to inspect plan.md first). If demand emerges, a future B3-1 PR can extend the chain.
+
+Note: unlike pure `crewai-debate`, the trailing Bash call(s) AND the confirmation lines are all **expected** in this skill, BECAUSE this skill is terminal-only by design. The Discord-drop hazard does not apply.
 
 ## Sidecar write — what the Bash call does
 
@@ -125,7 +142,7 @@ If the file already exists, **abort the write** and emit `bridge: refused — de
 
 ## After this skill: operator's next step
 
-The skill leaves the operator at the harness's plan-phase boundary. The natural next command is:
+**Without `auto-plan: yes`**: the skill leaves the operator at the harness's plan-phase boundary. The natural next command is:
 
 ```bash
 python3 lib/harness/phase.py plan <slug> --intent "<short conventional-commit-style summary>" --target-repo <path>
@@ -133,8 +150,11 @@ python3 lib/harness/phase.py plan <slug> --intent "<short conventional-commit-st
 
 `phase.py plan` will detect `state/harness/<slug>/design.md`, log a stderr line like `plan: design.md sidecar detected (… chars) — injecting as approved design context (ADR-0003)`, and inject the file's contents into the planner's prompt under `## Approved design context (do not deviate)`. The planner persona (PR #26 of the ADR-0003 stack) then honors those decisions as load-bearing constraints.
 
+**With `auto-plan: yes`**: the skill has already invoked plan. The operator's next step is `python3 lib/harness/phase.py impl <slug>` (or to inspect `state/harness/<slug>/plan.md` first). Auto-plan does not extend further down the pipeline — see the "Output format" section's chain-stops-at-plan rationale.
+
 ## What this skill does NOT do
 
-- It does not run any harness phase. The skill stops after writing the sidecar; the operator runs `phase.py plan` separately. This separation keeps the skill testable and the harness phase ordering explicit.
+- It does not run impl, commit, pr-create, or any post-plan phase even with `auto-plan: yes`. Auto-plan stops at the plan-phase boundary so the operator can inspect plan.md before committing the harness to the rest of the pipeline.
+- Without `auto-plan: yes` it does not run any harness phase at all — the operator runs `phase.py plan` separately. The default-off behaviour preserves explicit operator control.
 - It does not validate `<slug>` against existing harness state. If the slug already has a `state.json`, the next `phase.py plan` will fail loudly with `task already exists` — that's the right place to enforce uniqueness, not here.
 - It does not re-debate when the sidecar already exists. The "refused" path is intentional: re-running the same debate yields a different transcript, and silently overwriting an operator-approved decision defeats the bridge's purpose.
