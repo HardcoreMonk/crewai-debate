@@ -42,6 +42,11 @@ PHASE_MAX_ATTEMPTS = {
 REVIEW_POLL_INTERVAL_SEC = 45
 REVIEW_MAX_ROUND = 2        # autofix re-review loop cap (§2 decision)
 APPLY_RETRY_PER_COMMENT = 2  # implementer self-fix cap on a single comment
+# §13.6 #7-8 — when a CodeRabbit rate-limit marker is detected, push the
+# review-wait deadline forward by this much (once per invocation). 30 min is
+# the typical free-plan window; longer would risk the operator forgetting
+# the run is in flight.
+RATE_LIMIT_EXTENSION_SEC = 1800
 
 REQUIRED_PLAN_SECTIONS = ("files", "changes", "tests", "out-of-scope")
 
@@ -1012,6 +1017,8 @@ def cmd_review_wait(args) -> int:
     seen_review_max = int(s.get("seen_review_id_max") or 0)
     seen_issue_max = int(s.get("seen_issue_comment_id_max") or 0)
 
+    rate_limit_extended = False  # §13.6 #7-8 — at-most-once deadline bump
+
     with log.open("w") as logf:
         logf.write(
             f"review-wait: base={base_repo} pr={pr_number} head={head} "
@@ -1065,6 +1072,20 @@ def cmd_review_wait(args) -> int:
                 if ic_id <= seen_issue_max:
                     continue
                 body = ic.get("body") or ""
+                # §13.6 #7-8 — rate-limit detection extends the deadline
+                # once per invocation. Independent of skip/fail/complete
+                # classification: a rate-limit message is its own kind of
+                # signal. Only act once so we don't repeatedly extend on
+                # the same comment seen across polls.
+                if not rate_limit_extended and coderabbit.is_rate_limit_marker(body):
+                    rate_limit_extended = True
+                    deadline += RATE_LIMIT_EXTENSION_SEC
+                    note = (
+                        f"CodeRabbit rate-limit detected (issue #{ic_id}); "
+                        f"deadline extended by {RATE_LIMIT_EXTENSION_SEC}s"
+                    )
+                    print(f"review-wait: {note}", file=sys.stderr)
+                    logf.write(f"poll {poll_count}: {note}\n")
                 sig = coderabbit.classify_review_body(body)
                 if sig.kind in ("skipped", "failed", "complete"):
                     if issue_sig is None or (ic.get("created_at") or "") > (getattr(issue_sig, "submitted_at", "") or ""):
