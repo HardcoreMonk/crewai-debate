@@ -190,6 +190,7 @@ docs/
     README.md              # ADR convention + index
     0001-harness-state-retention-policy.md
     0002-allow-cmd-merge-re-run-after-dry-run-completion.md  # §13.6 #7-9
+    0003-debate-harness-bridge-via-design-sidecar.md  # debate ↔ harness bridge architecture
   harness/
     DESIGN.md              # brainstorm → phase contracts → retrospectives → as-built §14
     MVP-D-PREVIEW.md       # CodeRabbit research + phase split
