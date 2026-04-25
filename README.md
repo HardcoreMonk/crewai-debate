@@ -34,6 +34,8 @@ See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-
 - `lib/harness/tests/test_plan_info_hygiene.py` — plan-info hygiene unit tests (17 cases covering §13.6 #7-6 HTML-comment strip, extraction-site integration for commit/PR/ADR, and §13.6 #7-5 `validate_plan_consistency` cross-check including unicode-ellipsis placeholder regression).
 - `lib/harness/tests/test_adr_width.py` — `_next_adr_number` width-resolution unit tests (11 cases covering §13.6 #7-1 `--adr-width` override + existing-convention authority; underscore-separator filename + max+1 vs count+1).
 - `lib/harness/tests/test_coderabbit_rate_limit.py` — `is_rate_limit_marker` unit tests (12 cases covering §13.6 #7-8 phrasing variants + false-positive defence against unrelated `rate`/`limit` words and other CodeRabbit markers).
+- `lib/harness/tests/test_normalize_tests_cmd_env.py` — `normalize_tests_command` env-adaptation unit tests (7 cases covering bare `python` → `python3` rewrite + word-boundary safety on `python3` / `pythonic` / `python.exe`). Landed via the harness's first self-managed full 10-phase merge (PR #15, see DESIGN §13.9).
+- `lib/harness/tests/test_merge_dry_run_rerun.py` — `cmd_merge` post-dry-run re-run unit tests (7 cases covering §13.6 #7-9: dry-run completion lets the same task transition to a real merge; real merge once it lands is fatal-on-retry).
 - `lib/harness/fixtures/coderabbit/*.json` — reference CodeRabbit payloads for parser self-test.
 
 ## Harness — getting started
@@ -181,10 +183,13 @@ lib/
       test_plan_info_hygiene.py           # HTML-comment strip + plan linter (§13.6 #7-2/#7-5/#7-6)
       test_adr_width.py                   # _next_adr_number override / detection (§13.6 #7-1)
       test_coderabbit_rate_limit.py       # is_rate_limit_marker tests (§13.6 #7-8)
+      test_normalize_tests_cmd_env.py     # normalize_tests_command env-adaptation tests (PR #15 dogfood)
+      test_merge_dry_run_rerun.py         # cmd_merge dry-run → real merge tests (§13.6 #7-9)
 docs/
   adr/                     # Architecture Decision Records (2026-04-25)
     README.md              # ADR convention + index
     0001-harness-state-retention-policy.md
+    0002-allow-cmd-merge-re-run-after-dry-run-completion.md  # §13.6 #7-9
   harness/
     DESIGN.md              # brainstorm → phase contracts → retrospectives → as-built §14
     MVP-D-PREVIEW.md       # CodeRabbit research + phase split

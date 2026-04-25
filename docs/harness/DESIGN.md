@@ -269,6 +269,12 @@ API 비용 문제를 해결하는 고효율 AI 업무 시스템. OAuth 기반 Op
 | 2026-04-25 | §13.6 **#7-2 / #7-5 / #7-6 동시 해결** — plan-info hygiene 묶음. (#7-6) `_strip_html_comments` 헬퍼가 `extract_commit_body` / `_build_pr_body` / `_build_adr_prompt` 진입에서 `<!-- ... -->` 블록 제거 → 운영자 내부 메모는 commit/PR/ADR로 유출 안 됨. (#7-5) `validate_plan_consistency` 린터가 `## changes` / `## out-of-scope`에서 path-shaped 토큰을 추출해 `## files` 등재 또는 디스크 존재 여부 cross-check → 미존재 시 warning(fail 아님). (#7-2) adr-writer 페르소나에 "command를 verbatim 복사하지 말고 실제 canonical form 사용" 가드 추가 + plan_text가 strip된 채 전달되어 잘못된 invocation이 ADR로 번질 표면 자체가 축소. 17 tests (test_plan_info_hygiene.py — strip 5 + extraction-site integration 4 + 린터 8). 페르소나 양쪽 갱신(planner.md HTML-comment + cross-check 안내, adr-writer.md command-verbatim 가드). |
 | 2026-04-25 | §13.6 **#7-1 / #7-3 동시 해결** — ADR 컨벤션 묶음. (#7-1) `--adr-width N` CLI 플래그를 `_next_adr_number(adr_dir, override_width=...)`로 wiring. 비어있는 `docs/adr/`에서만 적용, 기존 ADR이 한 건이라도 있으면 그 width가 authoritative (mixing widths가 cross-link을 깨므로). 기본값은 여전히 4. (#7-3) planner 페르소나가 `docs/adr/`/`adr/`/`docs/adrs/` 경로를 `## files`에 등재하지 못하도록 명시 — adr phase가 별도 작성하므로 plan-files에 들어가면 commit phase가 잘못된 파일명으로 staging 시도하거나 빈 set으로 실패. 11 tests (test_adr_width.py — empty dir override 0/음수/양수, 기존 ADR width detection 우선, underscore separator, max+1 vs count+1 등). |
 | 2026-04-25 | §13.6 **#7-8 해결 (보수적 변형)** — CodeRabbit free-plan rate-limit 자동 감지 + deadline 연장. `coderabbit.is_rate_limit_marker(body)`가 issue comment에서 `\brate[\s-]*limit(?:ed)?\b` 패턴 감지 → `cmd_review_wait`이 한 번에 한해 `RATE_LIMIT_EXTENSION_SEC=1800` 추가. **자동 `@coderabbitai review` 포스팅은 안 함** — PR 상태 변경은 부수효과 위험이 있어 운영자에게 위임. 12 tests (test_coderabbit_rate_limit.py — 표기 변형, 다른 sentence 포함 false-positive 방어, skip/zero-actionable 마커와 직교). 추후 dogfood에서 자동 재요청까지 필요해지면 별도 PR로 등재. |
+| 2026-04-25 | **Stacked PR merge 6연쇄** — PR #8 → #14(원래 #9, base 자동 삭제로 재오픈) → #10 → #11 → #12 → #13. main 6회 squash 머지로 §13.6 #10 + #7-1~#7-8 시리즈 일괄 안착. 운영 노트: `--delete-branch`이 자식 PR의 base를 지워 auto-close 시키므로, **stack 만들자마자 모든 child PR을 main으로 retarget** + 머지 시점마다 `git rebase origin/main` + force-push이 안전 패턴. (RUNBOOK 항목 참조) |
+| 2026-04-25 | **Self-managed full 10-phase 첫 완주** (PR #15, sha `cbb4c30`) — `test: add normalize_tests_command unit test for env-without-python case`. plan→impl→commit→pr-create→review-wait→fetch→apply→reply→merge 전부 harness 명령으로 진행 (adr만 test-only라 스킵). review-wait에서 §13.6 #7-8 fix가 즉시 발동 (rate-limit 감지+deadline 연장), 운영자가 `@coderabbitai review`로 수동 재요청. 자동 적용된 nitpick(import isolation fixture)도 회귀 0. 누적 테스트 86→93. |
+| 2026-04-25 | **Self-improving dogfood 2회차** (PR #16, sha `a602e55`) — `fix: cmd_merge accepts dry-run-completed phase` (§13.6 **#7-9** 해결). plan→impl→commit→**adr (`--auto-commit`)**→pr-create까지 5/10 완주 후 review-wait에서 §13.6 **#11** 신규 friction 발견 → OOB 머지로 종료. ADR-0002 자동 commit (§13.6 #7-4 + #7-1 width detection 동시 검증). 누적 테스트 93→94. |
+| 2026-04-25 | §13.6 **#7-9 해결** (PR #16) — `cmd_merge`가 `phase.merge.status == COMPLETED`인 경우 무조건 fatal하던 가드 완화. dry-run 종료 (`merge_sha is None and dry_run is True`)는 re-runnable로 허용, 실제 merge가 끝난 경우만 fatal. 7 tests (test_merge_dry_run_rerun.py — dry-run→real 전이, real-merge 후 재호출 거부, dry-run 시 `merge_pr` 미호출). |
+| 2026-04-25 | §13.6 **#11 등재** — CodeRabbit nitpick-only review 새 포맷. `<details><summary>🧹 Nitpick comments (N)</summary>` 직접 시작, `**Actionable comments posted: N**` 헤더와 `"No actionable comments were generated"` 둘 다 부재 → `classify_review_body`가 `kind=none` 반환해 `cmd_review_wait`이 timeout. PR #16 검증 중 발견, OOB로 우회. Fix 미실행 (다음 사이클 후속). |
+| 2026-04-25 | Docs currency pass #3 — 본 문서 §11 dated log + §13.6 #7-9/#11 등재 + §13.9 신설 + RUNBOOK (stacked-PR 패턴 + rate-limit 운영 절차 + dry-run merge 재실행 가능) + README.md 테스트 인벤토리 + MVP-D-PREVIEW §2.2 (#11 admonition) + ADR README 인덱스 (ADR-0002). |
 
 ---
 
@@ -393,7 +399,9 @@ PR#1 적용 결과: 18 → 6 eligible (전부 Minor, 전부 docs/markdown/lint).
   - **#7-8 CodeRabbit 시간당 review rate limit** — ✅ **부분 해결** (이번 PR, 보수적 변형). `is_rate_limit_marker`로 issue comment 감지, `cmd_review_wait`이 한 번에 한해 deadline을 1800s 연장. 자동 `@coderabbitai review` 포스팅은 의도적으로 미구현 — PR 상태 변경(comment 작성)은 false-positive 시 운영 노이즈가 크고, rate-limit 회복 시점이 부정확할 수 있어 운영자 결정에 맡김. dogfood에서 deadline-extension만으로 부족함이 재확인되면 자동 포스팅을 별도 PR로 등재.
 - **#8 Harness gate receiver-less merge unsupport** — ✅ **해결** (PR #5, commit `046a089`). `gh.is_pr_mergeable()`가 이제 `reviewDecision`을 `(None, "", "APPROVED")` 중 하나로 허용. `""`는 gh CLI가 "리뷰 규칙 없음"을 표현하는 방식이라 `None`과 동치 처리. 다른 값(`CHANGES_REQUESTED`/`REVIEW_REQUIRED` 등)은 계속 차단. `lib/harness/tests/test_gh_gate.py` 10 cases로 regression 방지.
   - 역사: 이 버그 때문에 PR #3과 PR #4 모두 OOB `gh pr merge --squash`로 머지했고, 고친 PR #5 자체도 (chicken-and-egg) OOB 머지.
-- **#10 Zero-actionable CodeRabbit review detection** — ✅ **해결** (이번 PR). CodeRabbit이 findings가 0건인 PR에 대해 `"No actionable comments were generated in the recent review. 🎉"` 문구를 **issue comment로만** 포스트하고 formal review 객체는 만들지 않음. 기존 `classify_review_body`는 `**Actionable comments posted: N**` 패턴만 `kind=complete`로 인식해서 이 케이스가 감지 안 됨 → `cmd_review_wait`가 600s 타임아웃까지 대기 후 `status=failed`. Fix: (a) `coderabbit.py`에 `NO_ACTIONABLE_RE = r"No actionable comments were generated"` 추가 → `kind=complete, actionable_count=0`로 분류하되 `ACTIONABLE_RE`/skip/fail 마커가 우선; (b) `cmd_review_wait`의 issue-comment 분기가 `complete` kind일 때 synthetic `review_id=0, review_sha=""`로 phase 완료 처리. `lib/harness/tests/test_coderabbit_zero_actionable.py` 7 cases (precedence 포함)로 regression 방지. PR #6은 발견 당시 OOB 머지됨.
+- **#10 Zero-actionable CodeRabbit review detection** — ✅ **해결** (PR #8). CodeRabbit이 findings가 0건인 PR에 대해 `"No actionable comments were generated in the recent review. 🎉"` 문구를 **issue comment로만** 포스트하고 formal review 객체는 만들지 않음. 기존 `classify_review_body`는 `**Actionable comments posted: N**` 패턴만 `kind=complete`로 인식해서 이 케이스가 감지 안 됨 → `cmd_review_wait`가 600s 타임아웃까지 대기 후 `status=failed`. Fix: (a) `coderabbit.py`에 `NO_ACTIONABLE_RE = r"No actionable comments were generated"` 추가 → `kind=complete, actionable_count=0`로 분류하되 `ACTIONABLE_RE`/skip/fail 마커가 우선; (b) `cmd_review_wait`의 issue-comment 분기가 `complete` kind일 때 synthetic `review_id=0, review_sha=""`로 phase 완료 처리. `lib/harness/tests/test_coderabbit_zero_actionable.py` 7 cases (precedence 포함)로 regression 방지. PR #6은 발견 당시 OOB 머지됨.
+- **#7-9 cmd_merge dry-run lock-out** — ✅ **해결** (PR #16, sha `a602e55`). `--dry-run`으로 gate를 확인한 뒤 `phases.merge.status`가 `completed`로 마크되어 동일 task에서 실제 merge 호출이 `"merge already completed"`로 거부되는 lock-out. dogfood 1회차에서 운영자가 state.json 수동 패치로 우회. Fix: `cmd_merge`가 prior completion이 dry-run(`merge_sha is None and dry_run is True`)이면 re-runnable, 실제 머지 종료(`merge_sha`가 set)일 때만 fatal. `lib/harness/tests/test_merge_dry_run_rerun.py` 7 cases.
+- **#11 Nitpick-only review format detection (신규, PR #16 검증 중 발견)** — ⏳ **open**. CodeRabbit이 actionable 0건이지만 nitpick suggestion만 있는 PR에 대해 `<details><summary>🧹 Nitpick comments (N)</summary>` 직접 시작하는 새 포맷의 **formal review 객체**를 게시 (issue comment 아님). `**Actionable comments posted: N**` 헤더와 `"No actionable comments were generated"` 둘 다 부재 → `classify_review_body`가 `kind=none` 반환 → `cmd_review_wait`이 600s timeout. PR #16 자체 검증에서 직접 격발해 OOB 머지. Fix 후보: `coderabbit.py`에 `NITPICK_HEADER_RE = re.compile(r"<summary>🧹 Nitpick comments \((\d+)\)")` 추가 + 매치 시 `kind=complete, actionable_count=N`(또는 0). 디자인 결정 필요: nitpick은 auto_applicable이라 review-fetch가 inline으로 다시 잡지만, 이번 케이스는 inline_comments=0이고 review body에만 details 블록이 있음 → 본문 파싱이 필요할 수도. **§11과 별개**: §10은 *issue comment*에 phrase 매치였고, §11은 *formal review object*인데 헤더가 없음.
 
 ### 13.7 V1 pr-create live smoke + validator shlex refactor (2026-04-25)
 
@@ -473,6 +481,63 @@ round 5 : actionable=0   (resolved×1) ← 수렴
 이 수정은 별도 follow-up PR에서 진행 예정. 이번 dogfood는 **harness가 자기
 자신을 개선하는 첫 evidence**이자, 9건의 신규 friction(§13.6 #7-1~#7-8 + #8)을
 자체 발굴한 기록.
+
+### 13.9 Self-managed full-chain dogfood — gen-2 (PR #15+#16, 2026-04-25)
+
+목적: §13.6 #8/#10/#7-1~#7-8 일괄 머지 후 self-managed repo에서
+`intent → merged PR`이 사람 개입 최소로 가능한지 재검증. PR #15는 first-ever
+**full 10-phase harness-merge**, PR #16은 그 직후 **self-improving** 사이클
+(harness가 자체 friction을 코드로 고침).
+
+**PR #15 (sha `cbb4c30`)**
+
+Intent: `test: add normalize_tests_command unit test for env-without-python case`.
+test-only 변경이라 `adr` phase는 의도적으로 스킵.
+
+| phase | 결과 | 비고 |
+|-------|------|------|
+| plan | 1회 | 새 린터(§13.6 #7-5)가 `script.py` token에 warning 출력 — false positive (`## changes` 설명의 예시 인자, 의도된 path 아님). plan은 정상 통과 |
+| impl | 1회 | 7-test 모듈 작성 완료, 첫 시도 모든 테스트 통과 |
+| commit | 1회 | `8127d4c` — H1 `test:` prefix conventional commit |
+| pr-create | 1회 | PR #15 오픈 |
+| review-wait round 1 | 1 actionable | **§13.6 #7-8 fix가 즉시 발동** — poll 1에서 rate-limit 감지(`#4317165637`), deadline +1800s. 운영자가 `@coderabbitai review`로 수동 재트리거(§13.6 #7-8 보수적 cut 설계대로) → review_id `4174257351`, actionable=1 (potential_issue/minor) |
+| review-fetch | 1회 | inline 1건, auto_applicable=true |
+| review-apply | 1회 | autofix sha `1ccb449` — pytest 부수 효과 `monkeypatch.syspath_prepend` 기반 fixture로 import isolation 강화. 7 tests 여전히 통과 |
+| review-reply | 1회 | 요약 코멘트 |
+| merge | 1회 | dry-run으로 gate 확인 → 실제 merge에서 §13.6 **#7-9** 격발(state.json 수동 리셋으로 우회) → sha `cbb4c30` |
+
+**Verdict**: 10/10 phase harness 완주 (merge에서 #7-9 운영자 우회 1회). 첫
+self-managed full-chain.
+
+**PR #16 (sha `a602e55`)**
+
+Intent: `fix: cmd_merge accepts dry-run-completed phase to enable post-dry-run real merge`
+(§13.6 #7-9 자체 fix). impl이 phase.py를 직접 수정하므로 ADR 적격.
+
+| phase | 결과 | 비고 |
+|-------|------|------|
+| plan | 1회 | 2 false-positive warnings (test 파일명이 `## changes` 설명에 등장) — 정상 통과 |
+| impl | 1회 | `cmd_merge` 8줄 변경 + `test_merge_dry_run_rerun.py` 7 tests. 첫 시도 통과 |
+| commit | 1회 | `87d1ace` |
+| **adr (`--auto-commit`)** | 1회 | ADR-0002 자동 commit `2bfbb87` — §13.6 **#7-4 + #7-1** 동시 실전 검증 (auto-commit + width detection) |
+| pr-create | 1회 | PR #16 오픈 |
+| review-wait | **timeout** | poll 15 = 600s 동안 `reviews=1 bot=1 kind=None` 반복 — **§13.6 #11 신규 friction** 격발 (formal review 객체에 `**Actionable comments posted: N**` 헤더 부재, `<details><summary>🧹 Nitpick comments (2)</summary>` 직접 시작) |
+| review-fetch / apply / reply | 미실행 | review-wait 실패로 진입 안 함 |
+| merge | OOB | `gh pr merge 16 --squash --delete-branch` 운영자 우회 |
+
+**Verdict**: 5/10 phase harness 완주, 1 신규 friction(§13.6 #11) 자체 발굴.
+
+**누적 학습**:
+- §13.6 #7-8 fix는 운영 가치 검증됨 — 첫 dogfood에서 즉시 발동
+- §13.6 #7-4 `--auto-commit` + #7-1 width detection은 ADR-0002 생성으로 동시 실증
+- 새 friction 2건(§13.6 #7-9 fixed in PR #16, §13.6 #11 open)
+- §13.6 #10 fix가 catch하지 못하는 **다른** review 포맷이 존재함을 확인
+- self-managed harness-merge는 이제 **사람 개입 1~2회** (rate-limit 시 manual `@coderabbitai`,
+  dry-run 후 #7-9 우회 — 후자는 PR #16 머지로 자동 제거됨)
+
+**Timings**:
+- PR #15: 전체 wall-clock ~25분 (rate-limit 대기 ~10분 포함)
+- PR #16: 전체 wall-clock ~15분 (review-wait timeout까지)
 
 ---
 

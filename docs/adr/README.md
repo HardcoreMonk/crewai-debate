@@ -13,3 +13,4 @@
 
 <!-- ADR-001부터 시간순으로 추가. -->
 - [ADR-0001: Harness state retention policy](0001-harness-state-retention-policy.md)
+- [ADR-0002: Allow `cmd_merge` re-run after dry-run completion](0002-allow-cmd-merge-re-run-after-dry-run-completion.md)

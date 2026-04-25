@@ -60,6 +60,8 @@ Skip/fail 케이스: `<!-- ... skip review by coderabbit.ai -->` 또는 `<!-- ..
 
 > ✅ **2026-04-25 해결 (DESIGN §13.6 #10)**: CodeRabbit이 actionable 0건인 PR에 대해서는 *formal review 객체를 만들지 않고* `"No actionable comments were generated in the recent review. 🎉"` 라는 issue comment만 포스트. `coderabbit.py`에 `NO_ACTIONABLE_RE` 추가로 `classify_review_body`가 이를 `kind=complete, actionable_count=0`으로 인식하며, `cmd_review_wait`의 issue-comment 분기가 synthetic `review_id=0, review_sha=""`로 phase를 완료시킨다.
 
+> ⏳ **2026-04-25 등재 — open (DESIGN §13.6 #11)**: 위 §10과 별개로, **nitpick-only formal review** 케이스가 따로 존재한다. CodeRabbit이 actionable 0건이지만 nitpick suggestion이 있는 PR에 대해서는 issue comment가 아닌 **review 객체 자체**를 게시하되, body가 `**Actionable comments posted: N**` 헤더와 `"No actionable comments were generated"` 둘 다 없이 `<details><summary>🧹 Nitpick comments (N)</summary>` 부터 시작한다. `classify_review_body`는 현재 이 케이스에 `kind=none`을 반환해 `cmd_review_wait`이 600s 타임아웃까지 대기. PR #16 검증 중 직접 격발해 OOB로 우회. Fix 후보: `coderabbit.py`에 `NITPICK_HEADER_RE` 추가 + 매치 시 `kind=complete`로 분류 (actionable_count 의미는 디자인 결정 필요).
+
 **Inline 코멘트 템플릿**:
 ```
 `<line-range>`: **<Title>**
