@@ -163,7 +163,44 @@ When this fallback applies vs. waiting:
 - **Apply close+reopen** when `review-wait` has already timed out (`failed`, 40+ min budget exhausted) AND the bucket-exhaustion hypothesis is plausible (multiple recent PRs in the same hour).
 - **Just wait** when the time window is short (< 30 min) — CodeRabbit's composite path may still deliver a zero-actionable issue comment as it did in PR #49 (~28 min).
 
-Automation policy: still manual. Triggers an automation PR once silent-ignore frequency hits **n=2** confirmed cases (PR #50 was n=1).
+Automation policy: still manual. Triggers an automation PR once silent-ignore frequency hits **n=2** confirmed cases (PR #50 was n=1). **Update — n=2 confirmed (PR #50/#52); automation shipped in PR #57** as the `--silent-ignore-recovery` opt-in flag on `review-wait` (or `HARNESS_SILENT_IGNORE_RECOVERY=1` env var). Behaviour is identical to the manual procedure above — the harness does the close+reopen + bump_round + recurse for you when round-1 timeout hits with the marker pushed.
+
+## Cron-tick auto-poller (DESIGN §13.6 (c.1))
+
+For unattended re-poll of in-progress review tasks, install the systemd `--user` timer that ships with the repo:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ops/systemd/harness-cron-tick.{service,timer} ~/.config/systemd/user/
+# Edit the unit if your clone is not at ~/projects/claude-zone/crewai
+systemctl --user daemon-reload
+systemctl --user enable --now harness-cron-tick.timer
+systemctl --user list-timers | grep harness   # verify next-fire time
+```
+
+The timer fires `lib/harness/cron-tick.sh` every 7 minutes (with ±60 s jitter, +5 min after-boot delay). The wrapper reads `python3 lib/harness/sweep.py --json`, finds review tasks whose **next phase is `review-wait`**, and spawns one `review-wait` per slug via `setsid nohup` so the spawned process outlives the unit invocation. `setsid` plus a per-task `pgrep` skip means concurrent ticks never double-fire the same slug.
+
+Default flags include both `--rate-limit-auto-bypass` and `--silent-ignore-recovery` — operators who installed the timer want the unattended path. To narrow the scope:
+
+```bash
+systemctl --user edit harness-cron-tick.service
+# Add to the override file:
+#   [Service]
+#   Environment="HARNESS_CRON_TICK_FLAGS=--rate-limit-auto-bypass"
+```
+
+What it does NOT auto-fire (intentional, conservative scope):
+- `review-fetch` / `review-apply` / `review-reply` / `merge` — these have non-trivial side effects (commits, pushes, PR comments, irreversible merges). Operator runs them manually after `review-wait` completes.
+- `plan` / `impl` / `commit` / `pr-create` — build-task phases stay operator-driven.
+
+Logs land at `state/harness/cron-tick.log` and via `journalctl --user -u harness-cron-tick.service`. Scan summary line at the end of each tick reports `considered=N fired=N skipped=N`.
+
+To remove:
+```bash
+systemctl --user disable --now harness-cron-tick.timer
+rm ~/.config/systemd/user/harness-cron-tick.{service,timer}
+systemctl --user daemon-reload
+```
 
 ## Stacked PR merge protocol
 

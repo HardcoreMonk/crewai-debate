@@ -1,0 +1,24 @@
+[Unit]
+Description=Periodic harness-cron-tick (DESIGN §13.6 (c.1))
+Documentation=https://github.com/HardcoreMonk/crewai-debate/blob/main/docs/RUNBOOK.md
+
+[Timer]
+# Fire 5 minutes after boot (so a reboot doesn't immediately storm the
+# GitHub API), then every 7 minutes thereafter. The 7-minute interval is
+# coprime with most GitHub abuse-rate-limit windows (60 s, 60 min) so
+# successive ticks land in different buckets.
+OnBootSec=5min
+OnUnitActiveSec=7min
+# Add ±60 s of randomized delay so multiple operators running this timer
+# don't cluster their requests on the wall-clock minute boundary.
+RandomizedDelaySec=60
+AccuracySec=10s
+# Persistent=true → if the machine is suspended/asleep when a tick is
+# due, fire it on resume rather than skipping silently.
+Persistent=true
+# Limit how many missed ticks accumulate during long sleeps; we only
+# want a single catch-up, not a queue.
+Unit=harness-cron-tick.service
+
+[Install]
+WantedBy=timers.target
