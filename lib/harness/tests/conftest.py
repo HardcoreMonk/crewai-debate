@@ -38,7 +38,10 @@ def _load_module(name: str):
     module-level state (env vars, sys.path tweaks, etc.) leave stale
     bindings that fight the next test's setup."""
     sys.modules.pop(name, None)
-    spec = importlib.util.spec_from_file_location(name, _LIB / f"{name}.py")
+    path = _LIB / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"unable to load module {name!r} from {path}")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
