@@ -188,6 +188,44 @@ HISTORY_SUMMARY:
 """)
 
 
+CANONICAL_ESCALATED_DEBATE = dedent("""\
+🚀 crewai-debate v3 — topic: rewrite Z (max_iter=2)
+
+### Developer — iter 1
+- approach A
+
+### Reviewer — iter 1
+REQUEST_CHANGES:
+- **issue 1**: breaks invariant
+
+### Developer — iter 2
+- approach B
+
+### Reviewer — iter 2
+REQUEST_CHANGES:
+- **issue 1**: still breaks invariant
+- **issue 2**: now also racy
+
+=== crewai-debate result ===
+TOPIC: rewrite Z
+STATUS: ESCALATED
+ITERATIONS: 2/2
+
+FINAL_DRAFT (iter 2):
+- approach B
+
+FINAL_VERDICT:
+REQUEST_CHANGES:
+- **issue 1**: still breaks invariant
+- **issue 2**: now also racy
+
+HISTORY_SUMMARY:
+- iter 1: REQUEST_CHANGES on invariant
+- iter 2: REQUEST_CHANGES on invariant + race
+===
+""")
+
+
 # ---- parser ----
 
 
@@ -329,6 +367,14 @@ def test_three_bullet_request_changes_parses():
     p = parse_debate_transcript(CANONICAL_3_BULLET_REQUEST_CHANGES)
     assert p["iterations"] == 2
     assert p["status_converged"] is True
+    assert p["slug"] is None
+
+
+def test_escalated_status_parses():
+    p = parse_debate_transcript(CANONICAL_ESCALATED_DEBATE)
+    assert p["iterations"] == 2
+    assert p["status_escalated"] is True
+    assert p["status_converged"] is False
     assert p["slug"] is None
 
 
