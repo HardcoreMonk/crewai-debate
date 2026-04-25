@@ -379,7 +379,7 @@ flowchart TB
 - **DAG 무순환**: `state` ↔ `runner` ↔ `coderabbit` ↔ `gh`는 서로 import 안 함, 모두 `phase`가 orchestrator.
 - **`gc.py`는 `state.py`만 읽음** — runner/gh/coderabbit과 분리되어 manual CLI가 hot-path 부작용 없이 안전 (ADR-0001).
 - **stdlib only** — 하네스 자체에는 third-party 의존성 없음.
-- **모듈 라인 수 (참고, 2026-04-25)**: `phase.py` ~85k chars, `coderabbit.py` ~21k, `state.py` ~13k, `gh.py` ~12k, `gc.py` ~5k, `runner.py` ~3k.
+- **모듈 규모 (참고)**: `phase.py`가 오케스트레이터로 가장 크고, `coderabbit.py`/`state.py`/`gh.py`가 핵심 보조 모듈이며, `gc.py`/`runner.py`는 상대적으로 작다.
 
 ---
 
