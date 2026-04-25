@@ -99,7 +99,7 @@ flowchart TB
 - **Implement task**: `plan → impl → commit → adr? → pr-create` (5 phases, `adr` optional).
 - **Review task**: `review-wait → review-fetch → review-apply → review-reply → merge` (5 phases). 별도 slug, 별도 `state.json`.
 
-각 phase는 `state.py::start_attempt`로 attempt 슬롯을 append, 완료 시 `set_phase_status(completed)`. `_require_prev_phase_completed`가 직전 phase 완료를 강제 — 멱등 재시도 + 명시적 순서.
+각 phase는 `state.py::start_attempt`로 attempt 슬롯을 append, 완료 시 `set_phase_status(completed)`. `_require_prev_phase_completed`가 직전 phase 완료를 강제 — 멱등 재시도 + 명시적 순서. 외부 repo 운영을 위해 **`plan` / `impl` / `pr-create` 진입 시 `_require_feature_branch` fail-fast** — HEAD가 `main`/`master`이면 즉시 fatal (§13.6 #14 fix, PR #54).
 
 ```mermaid
 flowchart LR
@@ -158,15 +158,21 @@ stateDiagram-v2
   manualReview --> markerCommit: incremental-decline<br/>detected (stage 2)
   markerCommit --> poll: push .harness/<br/>auto-bypass-marker.md
 
+  poll --> deadline: time.monotonic() &gt;= deadline
+  deadline --> recovery: --silent-ignore-recovery<br/>+ round=1<br/>+ marker pushed
+  deadline --> [*]: exit FAILED<br/>(default — no recovery)
+  recovery --> poll: gh.close_pr +<br/>gh.reopen_pr +<br/>state.bump_round<br/>(round=2, single-shot)
+
   actionable --> [*]: exit OK<br/>(actionable=N)
   noActionable --> [*]: exit OK<br/>(actionable=0, §13.6 #10)
   nitpickOnly --> [*]: exit OK<br/>(actionable=N nitpick)
 ```
 
-핵심 통찰 (PR #49 gen-12 검증):
+핵심 통찰 (PR #49 gen-12 + PR #50 gen-13 + PR #52 gen-15 검증):
 - §13.6 #10/#11/#12 핸들러가 모두 terminal state로 흡수.
 - "marker file → eventual zero-actionable" 합성 경로가 `markerCommit → poll → noActionable → exit`로 정확히 매핑.
-- 미해결: full silent-ignore (모든 응답 부재) — 빈도가 낮아 fix 후보 (a)/(b)/(c) deferred. (§13.6 #13 참조)
+- **§13.6 #13 silent-ignore 시나리오** (CodeRabbit hourly bucket 소진) production 확정 (PR #50/#52). 운영자 수동 close+reopen → bump_round → 재폴 → 정상 종결로 회복 검증.
+- **§13.6 #13 fix candidate (c) automation**: `--silent-ignore-recovery` opt-in 플래그가 round-1 timeout + marker 푸시 상태에서 자동 close+reopen + bump_round + recurse. 그림의 `deadline → recovery → poll` 분기. round=1 single-shot 가드로 round-2 timeout은 그대로 fatal.
 
 ---
 
