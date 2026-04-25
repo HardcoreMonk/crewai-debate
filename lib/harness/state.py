@@ -290,12 +290,19 @@ def set_auto_bypass_pushed(state: dict[str, Any]) -> None:
 
 
 def is_auto_bypass_pushed(state: dict[str, Any]) -> bool:
-    """Read the auto-bypass pushed flag, honoring the legacy key fallback."""
+    """Read the auto-bypass pushed flag.
+
+    Prefer the new key `auto_bypass_commit_pushed`. Only fall back to the
+    legacy `auto_bypass_pushed` when the new key is missing — otherwise
+    a `bump_round()` that resets the new key to False would still report
+    True from a migrated state.json that retained the legacy=True payload,
+    permanently suppressing the fallback push and mis-gating silent-ignore
+    recovery on later rounds.
+    """
     rw = state["phases"]["review-wait"]
-    return bool(
-        rw.get("auto_bypass_commit_pushed", False)
-        or rw.get("auto_bypass_pushed", False)
-    )
+    if "auto_bypass_commit_pushed" in rw:
+        return bool(rw["auto_bypass_commit_pushed"])
+    return bool(rw.get("auto_bypass_pushed", False))
 
 
 def set_auto_bypass_manual_attempted(
