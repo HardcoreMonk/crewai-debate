@@ -132,6 +132,39 @@ How it works (post-PR #47):
 
 **Graceful degradation.** Failure modes never escalate to a fatal: (a) target repo is dirty (logs `auto-bypass skipped: target repo is dirty (N uncommitted changes), falling back to deadline extension only`), (b) `gh.post_pr_comment` raises (logs `auto-bypass manual post failed: ...; falling back to empty commit immediately` — the message uses "empty commit" historically; the actual mechanism is now the marker file), (c) commit fails post-marker-write (logs `auto-bypass commit failed (exit=N) ...; working tree reset; falling back to deadline extension only` — `git reset --hard HEAD` cleans up the marker write), (d) `git push` exits non-zero (logs `auto-bypass push failed (exit=N): <stderr-tail>; local bypass commit reverted; falling back to deadline extension only` — `git reset --hard HEAD~1` rolls back both commit and marker file), (e) the relevant single-shot guard already true. In all cases, the deadline-only fallback (#7-8) remains in effect and the operator can still apply the manual workarounds above.
 
+### Silent-ignore recovery — close+reopen (§13.6 #13 fix candidate (c), validated PR #50)
+
+When `review-wait` exits with `status=failed` + note `timed out after 600s (54 polls)` AND the marker commit was already pushed (`auto_bypass_commit_pushed=true` in `state.json`) AND CodeRabbit is completely silent (`reviews=0`, no new comments since the auto-bypass ack), the operator is hitting **silent-ignore** — CodeRabbit's hourly bucket is fully exhausted and no further response is coming until the bucket resets (typically the next hour boundary). The auto-bypass marker did its job; CodeRabbit simply isn't honoring it.
+
+The validated recovery (first applied during PR #50 → second-round resolution within 3 min) is:
+
+```bash
+# 1. Reset CodeRabbit's "already-reviewed" cache by closing/reopening the PR.
+gh pr close <pr-number>
+gh pr reopen <pr-number>
+
+# 2. Bump the harness review round so review-wait accepts a re-attempt.
+#    bump_round resets per-round phase status, watermarks survive (§13.6 #7-7).
+python3 -c "
+import sys; sys.path.insert(0, 'lib/harness')
+import state
+s = state.load_state('<task-slug>')
+state.bump_round(s)
+"
+
+# 3. Re-run review-wait — same auto-bypass flag, same task slug.
+python3 lib/harness/phase.py review-wait <task-slug> --pr <n> \
+  --base-repo <owner/repo> --target-repo <path> --rate-limit-auto-bypass
+```
+
+What happens on the re-run: same marker SHA on the PR, but the reopen event refreshes CodeRabbit's view of the PR. Round 2 typically resolves within minutes via the composite path (zero-actionable issue comment → `actionable=0`). If main has merged ahead while you were waiting, **rebase against main and force-push the feature branch** before continuing fetch/apply/reply/merge — otherwise the merge gate flags a merge-conflict.
+
+When this fallback applies vs. waiting:
+- **Apply close+reopen** when `review-wait` has already timed out (`failed`, 40+ min budget exhausted) AND the bucket-exhaustion hypothesis is plausible (multiple recent PRs in the same hour).
+- **Just wait** when the time window is short (< 30 min) — CodeRabbit's composite path may still deliver a zero-actionable issue comment as it did in PR #49 (~28 min).
+
+Automation policy: still manual. Triggers an automation PR once silent-ignore frequency hits **n=2** confirmed cases (PR #50 was n=1).
+
 ## Stacked PR merge protocol
 
 Lessons from the 6-PR §13.6 merge cycle (DESIGN §11 dated log 2026-04-25 stack entry):
