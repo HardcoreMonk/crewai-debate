@@ -94,7 +94,7 @@ If the gate blocks but you're confident, bypass with `gh pr merge <n> --squash` 
 
 Zero-actionable PRs (CodeRabbit posts `"No actionable comments were generated"` as an issue comment without a formal review object) are now recognised by `review-wait` — synthetic `review_id=0, review_sha=""` records `actionable_count=0` and the phase completes (DESIGN §13.6 #10).
 
-**Known limitation (§13.6 #11, open).** `review-wait` does NOT yet recognise CodeRabbit's *nitpick-only* formal review objects — those open with `<details><summary>🧹 Nitpick comments (N)</summary>` and skip both the `**Actionable comments posted: N**` header and the zero-actionable phrase. Until fixed, such PRs hit `review-wait timed out after 600s`; bypass the same way (`gh pr merge`).
+Nitpick-only formal reviews (those that open with `<details><summary>🧹 Nitpick comments (N)</summary>` and omit the `**Actionable comments posted: N**` header) now classify as `kind=complete` with `actionable_count` parsed from the summary header (DESIGN §13.6 #11).
 
 ## Re-running merge after `--dry-run`
 

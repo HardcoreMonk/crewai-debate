@@ -1,0 +1,9 @@
+{
+  "id": 2987654323,
+  "user": {"login": "coderabbitai[bot]", "type": "Bot", "id": 136622811},
+  "body": "<details>\n<summary>🧹 Nitpick comments (2)</summary>\n\n<blockquote>\n\n<details>\n<summary>lib/harness/phase.py (1)</summary>\n\n`123-128`: _🧹 Nitpick_ | _🟡 Minor_\n\n**Tighten the dry-run gate message.**\n\nThe current message is fine but reads a bit verbose; consider trimming.\n\n</details>\n<details>\n<summary>lib/harness/tests/test_merge_dry_run_rerun.py (1)</summary>\n\n`42-44`: _🧹 Nitpick_ | _🟡 Minor_\n\n**Use parametrize for the two near-identical assertions.**\n\nMinor stylistic improvement.\n\n</details>\n\n</blockquote>\n\n</details>\n",
+  "state": "COMMENTED",
+  "commit_id": "a602e55b1234567890abcdef1234567890abcdef",
+  "submitted_at": "2026-04-25T14:22:01Z",
+  "html_url": "https://github.com/HardcoreMonk/crewai/pull/16#pullrequestreview-2987654323"
+}

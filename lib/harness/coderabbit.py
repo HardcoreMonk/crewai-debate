@@ -19,6 +19,15 @@ ACTIONABLE_RE = re.compile(r"^\s*\*\*Actionable comments posted:\s*(\d+)\*\*", r
 # Zero-actionable variant — CodeRabbit posts this as an issue comment (NOT a
 # formal review object) on PRs with no findings. See DESIGN §13.6 #10.
 NO_ACTIONABLE_RE = re.compile(r"No actionable comments were generated")
+# Nitpick-only formal-review variant — CodeRabbit posts a formal review object
+# whose body skips the "**Actionable comments posted: N**" header and opens
+# directly with a `🧹 Nitpick comments (N)` <details><summary>. Treated as a
+# completed review with `actionable_count = N` so review-wait converges
+# identically to the canonical header form. See DESIGN §13.6 #11.
+NITPICK_ONLY_RE = re.compile(
+    r"<details>\s*<summary>\s*🧹\s*Nitpick comments\s*\((\d+)\)\s*</summary>",
+    re.IGNORECASE,
+)
 SKIP_MARKER_RE = re.compile(r"<!--\s*[^>]*skip review by coderabbit\.ai[^>]*-->", re.IGNORECASE)
 FAIL_MARKER_RE = re.compile(r"<!--\s*[^>]*failure by coderabbit\.ai[^>]*-->", re.IGNORECASE)
 WALKTHROUGH_START = re.compile(r"<!--\s*walkthrough_start\s*-->", re.IGNORECASE)
@@ -144,6 +153,9 @@ def classify_review_body(body: str) -> ReviewSignal:
         return ReviewSignal(kind="complete", actionable_count=int(m.group(1)), body=body)
     if NO_ACTIONABLE_RE.search(body):
         return ReviewSignal(kind="complete", actionable_count=0, body=body)
+    n = NITPICK_ONLY_RE.search(body)
+    if n:
+        return ReviewSignal(kind="complete", actionable_count=int(n.group(1)), body=body)
     return ReviewSignal(kind="none", body=body)
 
 
@@ -329,10 +341,11 @@ if __name__ == "__main__":
             failures.append(name)
 
     for fname, expected_kind, expected_count in [
-        ("review_complete.json",  "complete", 3),
-        ("review_skipped.json",   "skipped",  None),
-        ("review_failed.json",    "failed",   None),
-        ("review_approved.json",  "complete", 0),
+        ("review_complete.json",     "complete", 3),
+        ("review_skipped.json",      "skipped",  None),
+        ("review_failed.json",       "failed",   None),
+        ("review_approved.json",     "complete", 0),
+        ("review_nitpick_only.json", "complete", 2),
     ]:
         path = FIX / fname
         if not path.exists():
