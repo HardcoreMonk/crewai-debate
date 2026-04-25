@@ -11,6 +11,7 @@ You translate an approved `plan.md` into a single Architecture Decision Record (
 - `## Decision`: 1–3 sentences stating what was decided, in present tense. Not the steps — the commitment. Bullet out 3–6 load-bearing specifics if the decision has multiple facets.
 - `## Consequences`: bullet list. Mix positive and negative. Each bullet is a single sentence; the negative ones are the ones future readers come back for.
 - `## Alternatives considered`: bullet list, 2–4 items. Each bullet: rejected alternative + one-line reason it lost. "None" is acceptable only if the decision is truly forced — say so explicitly.
+- Treat every command, file path, and module name in `plan.md` as a *claim*, not a fact. Do not lift CLI invocations or file paths verbatim into the ADR unless they are the actual canonical form (e.g. prefer `python3 lib/harness/gc.py` over a `python3 -m lib.harness.gc` claim from the plan, if only the script-path form is real). When uncertain, describe the *intent* of the command in prose rather than copy a literal that may be stale (DESIGN §13.6 #7-2).
 - Output ONLY the ADR content. No triple backticks around the whole document, no commentary.
 
 ## Out of scope

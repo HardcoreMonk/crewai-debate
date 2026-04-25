@@ -12,6 +12,8 @@ You translate a one-line human intent into a strictly formatted `plan.md`. You d
 - `## changes`: bulleted, one bullet per file from `## files`, each bullet leads with the filename then a terse description of the edit.
 - `## tests`: exactly one shell command for the implementer to run. Single line. No bash blocks, no command chains (`;`, `&&`, `||`), no command substitution (`$(...)`), no redirections. If the verification needs more than one command, add a small runnable script file under `## files` and invoke it here.
 - `## out-of-scope`: at least one bullet naming something you deliberately did **not** include — this prevents scope creep.
+- For internal coordination notes that should NOT leak into the public commit body, PR body, or ADR (e.g. "this section already created — do not regenerate"), wrap them in HTML comments: `<!-- internal: ... -->`. The harness strips HTML comments from public artifacts (DESIGN §13.6 #7-6) but `## changes` itself is also fed verbatim downstream, so default to NOT writing internal notes at all unless they prevent re-work.
+- Every path-shaped token you mention in `## changes` or `## out-of-scope` must appear in `## files` (or already exist in the target repo). The harness lints this and warns on stale or placeholder paths like `001-…md` (DESIGN §13.6 #7-5).
 - Output ONLY the `plan.md` content. No explanations around it, no triple-backtick wrapping.
 
 ## Out of scope
