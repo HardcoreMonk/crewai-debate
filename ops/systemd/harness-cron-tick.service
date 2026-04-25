@@ -1,0 +1,27 @@
+[Unit]
+Description=Harness review-wait auto-poller (DESIGN §13.6 (c.1))
+Documentation=https://github.com/HardcoreMonk/crewai-debate/blob/main/docs/RUNBOOK.md
+# This unit is OneShot — fired by harness-cron-tick.timer. Each invocation
+# scans state/harness/<slug>/ for in-progress review tasks and (re)spawns
+# `review-wait` for any that are not already running. The wrapper itself
+# returns within seconds; spawned children run independently with setsid.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Edit the next two lines to match your local clone.
+WorkingDirectory=%h/projects/claude-zone/crewai
+ExecStart=/usr/bin/env bash %h/projects/claude-zone/crewai/lib/harness/cron-tick.sh
+# Default flags include both auto-bypass and silent-ignore-recovery. Override
+# at the unit level via drop-in if you want a more conservative cron path:
+#     systemctl --user edit harness-cron-tick.service
+#     [Service]
+#     Environment="HARNESS_CRON_TICK_FLAGS=--rate-limit-auto-bypass"
+# Or set the environment variable in your shell when invoking ad-hoc.
+StandardOutput=journal
+StandardError=journal
+# Don't restart on failure — every miss is logged and the next timer tick
+# will try again. Restart=on-failure would amplify a transient hiccup into
+# a tight retry loop on rate-limited GitHub API.
+Restart=no
