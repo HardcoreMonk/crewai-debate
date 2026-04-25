@@ -73,11 +73,14 @@ def log_dir(task_slug: str) -> Path:
 
 
 def init_state(task_slug: str, intent: str, target_repo: str) -> dict[str, Any]:
-    """Create a fresh implement-task state.json. Fails if one already exists."""
+    """Create a fresh implement-task state.json. Fails only if state.json
+    itself exists — the directory may pre-exist if a debate-bridge skill
+    wrote a `design.md` sidecar before invoking the harness (ADR-0003).
+    """
     d = task_dir(task_slug)
     if state_path(task_slug).exists():
         raise FileExistsError(f"task already exists: {d}")
-    d.mkdir(parents=True, exist_ok=False)
+    d.mkdir(parents=True, exist_ok=True)
     log_dir(task_slug).mkdir(exist_ok=True)
     now = _now()
     state = {
