@@ -94,6 +94,17 @@ def test_successful_and_skipped_checks_allowed():
     assert ok is True, f"expected mergeable, got reasons={reasons}"
 
 
+def test_check_without_state_or_conclusion_ignored():
+    # gh.py:333 — `check.get("state") or check.get("conclusion")` yields a
+    # falsy value when neither key is present, so the `if state and ...`
+    # guard at line 334 skips the check entirely. Such rollup entries must
+    # not block merge.
+    pr = _base_pr(statusCheckRollup=[{"name": "pending"}])
+    ok, reasons = gh_mod.is_pr_mergeable(pr)
+    assert ok is True
+    assert reasons == []
+
+
 def test_multiple_failures_aggregated():
     pr = _base_pr(
         mergeable="CONFLICTING",
