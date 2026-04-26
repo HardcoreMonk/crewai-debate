@@ -2,6 +2,13 @@
 # cron-tick.sh — periodic invocation wrapper for the harness's review-wait
 # polling. Designed for systemd `--user` timer or cron, every 5 min.
 #
+# [비전공자 안내]
+# 사람이 직접 명령어를 치지 않아도 정해진 간격으로 자동으로 실행되어
+# "리뷰 결과를 기다리는 작업"을 대신 진행해주는 스크립트. systemd 타이머가
+# 매 7분마다 이 파일을 호출하면, 진행 중인 review-wait 작업을 찾아 한 번씩
+# 처리해주는 구조. 사용자가 자고 있어도 작업이 멈추지 않고 흘러간다.
+#
+# [주니어 개발자 안내]
 # Conservative scope (c.1): fires `review-wait` only. Other phases
 # (review-fetch / review-apply / review-reply / merge / impl / commit /
 # pr-create) stay operator-driven — those have non-trivial side effects

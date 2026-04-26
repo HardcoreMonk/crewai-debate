@@ -1,19 +1,31 @@
 """Harness state sweep CLI — list in-progress tasks and their next phase command.
 
-Companion to `gc.py`: gc identifies what to remove, sweep identifies what to
-resume. Useful for both manual operator work ("show me everything still
-running") and as a foundation for the (c) plan's cron-tick wrapper
-(`docs/harness/DESIGN.md` §4 추후 후보).
+[주니어 개발자 안내]
+gc.py와 대칭: gc는 "지울 것"을 찾고, sweep는 "이어서 할 것"을 찾는다.
+in-progress task별로 (slug, type, next_phase, status, round, command) 한 줄을
+출력 — 운영자가 copy/paste로 즉시 다음 단계를 실행 가능.
+
+cron-tick.sh의 입력 소스 — `--json` 출력을 bash가 파싱해서 review-wait를
+spawn (ADR-0005 (c.1) automation chain). 따라서 JSON schema는 stable
+contract — 변경 시 cron-tick.sh도 함께 갱신.
+
+Implementation 노트:
+- state.PHASES_IMPLEMENT/PHASES_OPTIONAL/PHASES_REVIEW를 임포트해서 phase
+  순서 single-source. 옛 버전이 인라인 리터럴을 가졌었지만 PR #61의
+  /simplify pass에서 통합.
+- `_command_hint`가 review-wait의 pr/base-repo/target-repo를 state.json에서
+  substitution — 운영자가 매번 인자를 외울 필요 없음.
 
 Usage:
     python3 lib/harness/sweep.py                # default: status per in-progress task
     python3 lib/harness/sweep.py --root <path>  # custom state root
     python3 lib/harness/sweep.py --json         # machine-readable output
 
-Each in-progress task is one row. A task is in_progress iff at least one of
-its phases (in the type-specific phase order) is not yet `completed`. The
-"next phase" is the first such phase. `--json` prints one JSON object per
-line so callers can pipe through `jq`.
+[비전공자 안내]
+"지금 진행 중인 작업 + 다음에 뭘 해야 하나?"를 한눈에 보여주는 도구.
+gc가 청소부라면 sweep는 "할 일 목록" 표시기. 끝낼 단계가 남아있는 모든
+작업을 표로 출력하고, 운영자는 그 줄 끝의 명령어를 그대로 복붙해서 실행.
+cron-tick.sh가 이 도구의 출력을 자동으로 읽어 unattended 실행도 가능.
 """
 from __future__ import annotations
 
@@ -37,8 +49,23 @@ _PHASES_IMPLEMENT_FULL = (
 
 
 def _next_phase(state_obj: dict[str, Any]) -> tuple[str, str] | None:
-    """Return (phase_name, status) of the first non-completed phase in the
-    type-appropriate phase order, or None if all phases are done."""
+    """task type-별 phase 순서를 walk해서 첫 non-completed phase 반환.
+
+    [주니어 개발자]
+    Implement-task 순서: plan → impl → commit → adr (옵션) → pr-create.
+    Review-task 순서: review-wait → fetch → apply → reply → merge.
+
+    isinstance(slot, dict) 가드 — back-compat이 깨진 state.json (옛 버전 task)
+    에서 phase가 없거나 string일 수 있음. 그 phase는 skip하고 다음으로 진행.
+
+    [비전공자]
+    한 task의 단계들을 순서대로 보면서 "아직 안 끝난 첫 단계"를 찾음.
+    예: plan은 끝났고 impl이 진행 중이면 ("impl", "running") 반환. 모든
+    단계가 끝났으면 None — 그 task는 표시하지 않음.
+
+    Returns:
+        (phase_name, current_status) 또는 None (전부 완료).
+    """
     task_type = state_obj.get("task_type")
     phases = state_obj.get("phases", {})
     if not isinstance(phases, dict):
@@ -55,7 +82,22 @@ def _next_phase(state_obj: dict[str, Any]) -> tuple[str, str] | None:
 
 
 def _command_hint(slug: str, task_type: str, next_phase: str, state_obj: dict[str, Any]) -> str:
-    """Synthesize a CLI command the operator can copy/paste to advance the task."""
+    """운영자가 copy/paste해 다음 phase를 실행할 수 있는 CLI 명령어 생성.
+
+    [주니어 개발자]
+    Phase별 인자 차이를 고려:
+    - review-wait: --pr / --base-repo / --target-repo가 필요. state.json에서
+      자동 추출해 substitution.
+    - implement plan: --intent / --target-repo가 필요. 둘 다 task별 고유
+      값이라 placeholder(`'...'`, `<path>`) 채운 채로 출력 (운영자가 실제
+      값으로 교체).
+    - 그 외: `phase.py <next_phase> <slug>` 짧은 형태로 충분 (다음 phase가
+      state.json만 읽으면 됨).
+
+    [비전공자]
+    "다음에 칠 명령어"를 한 줄 만들어서 보여줌. 운영자는 줄을 그대로
+    복사해서 터미널에 붙여넣기만 하면 됨.
+    """
     if task_type == state.TASK_TYPE_REVIEW and next_phase == "review-wait":
         base = state_obj.get("base_repo", "<base>")
         pr = state_obj.get("pr_number", "<pr>")
