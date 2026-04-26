@@ -178,7 +178,7 @@ systemctl --user enable --now harness-cron-tick.timer
 systemctl --user list-timers | grep harness   # verify next-fire time
 ```
 
-The timer fires `lib/harness/cron-tick.sh` every 7 minutes (with ±60 s jitter, +5 min after-boot delay). The wrapper reads `python3 lib/harness/sweep.py --json`, finds review tasks whose **next phase is `review-wait`**, and spawns one `review-wait` per slug via `setsid nohup` so the spawned process outlives the unit invocation. `setsid` plus a per-task `pgrep` skip means concurrent ticks never double-fire the same slug.
+The timer fires `lib/harness/cron-tick.sh` every 7 minutes (plus up to 60 s of randomized delay per `RandomizedDelaySec=60`, +5 min after-boot delay). The wrapper reads `python3 lib/harness/sweep.py --json`, finds review tasks whose **next phase is `review-wait`**, and spawns one `review-wait` per slug via `setsid nohup` so the spawned process outlives the unit invocation. `setsid` plus a per-task `pgrep` skip means concurrent ticks never double-fire the same slug.
 
 Default flags include both `--rate-limit-auto-bypass` and `--silent-ignore-recovery` — operators who installed the timer want the unattended path. To narrow the scope:
 

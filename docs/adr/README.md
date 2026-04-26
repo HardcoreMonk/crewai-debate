@@ -45,3 +45,5 @@
 - [ADR-0001: Harness state retention policy](0001-harness-state-retention-policy.md) — Accepted (2026-04-25)
 - [ADR-0002: Allow `cmd_merge` re-run after dry-run completion](0002-allow-cmd-merge-re-run-after-dry-run-completion.md) — Accepted (2026-04-25)
 - [ADR-0003: Bridge crewai-debate to harness via per-task design.md sidecar](0003-debate-harness-bridge-via-design-sidecar.md) — Accepted (2026-04-25)
+- [ADR-0004: Automate silent-ignore recovery via opt-in close+reopen](0004-silent-ignore-recovery-automation.md) — Accepted (2026-04-26)
+- [ADR-0005: Unattended `review-wait` scheduling via systemd `--user` timer](0005-unattended-review-wait-via-systemd-timer.md) — Accepted (2026-04-26)
