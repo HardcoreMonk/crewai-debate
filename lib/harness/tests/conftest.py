@@ -32,11 +32,31 @@ if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 
 
-def _load_module(name: str):
+# Modules that `phase.py` lazy-imports inside functions. When a fixture
+# reloads `phase`, these are popped too so a test that monkeypatched any
+# of them earlier doesn't leak a stale binding into the freshly-loaded
+# phase module's lookup chain (caught by the 3-reviewer pass on PR #65).
+_PHASE_LAZY_DEPS: tuple[str, ...] = ("coderabbit", "runner", "gh")
+
+
+def _load_module(name: str, *, also_pop: tuple[str, ...] = ()):
     """Force-reload a sibling module by file path. Each call replaces any
     prior `sys.modules[name]` entry — needed because tests that monkeypatch
     module-level state (env vars, sys.path tweaks, etc.) leave stale
-    bindings that fight the next test's setup."""
+    bindings that fight the next test's setup.
+
+    `spec_from_file_location` is used instead of `importlib.reload` because
+    `phase.py` mutates `sys.path` and reads env vars at import time; reload
+    would reuse the existing module object's `__dict__`, leaking class
+    identity across tests. A fresh `module_from_spec` gives a clean
+    namespace.
+
+    `also_pop` purges additional `sys.modules` entries before the reload,
+    so the freshly-loaded `name` doesn't accidentally bind to stale copies
+    via a lazy `import …` later in its code path.
+    """
+    for stale in also_pop:
+        sys.modules.pop(stale, None)
     sys.modules.pop(name, None)
     path = _LIB / f"{name}.py"
     spec = importlib.util.spec_from_file_location(name, path)
@@ -59,8 +79,13 @@ def state_mod():
 def phase_mod(state_mod):
     """Fresh-loaded `phase` module. Depends on `state_mod` so the import
     order matches phase.py's expectation that `state` is already in
-    `sys.modules` when `import state` runs."""
-    return _load_module("phase")
+    `sys.modules` when `import state` runs.
+
+    Also pops `phase.py`'s lazy-imported dependencies (`coderabbit`,
+    `runner`, `gh`) so a previous test's monkeypatch on any of them
+    doesn't leak into the freshly-loaded phase's lazy import sites.
+    """
+    return _load_module("phase", also_pop=_PHASE_LAZY_DEPS)
 
 
 @pytest.fixture
@@ -73,11 +98,26 @@ def git_in(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedPr
     """Run `git -C <repo> <args>` capturing output. Mirrors the inline
     pattern used by `phase.py::git()`. Use in tests that need to drive
     a tmp-path repo without re-implementing the subprocess invocation
-    in every file."""
-    return subprocess.run(
+    in every file.
+
+    On `check=True` failure, re-raises with stderr appended to the
+    message — `subprocess.CalledProcessError`'s default repr drops it,
+    leaving cryptic "returned non-zero exit status N" messages.
+
+    Do NOT use for remote-auth git commands (`push`, `fetch`, `clone`
+    against a real remote) — captured stdout/stderr can leak credentials
+    into pytest's `-v` output and into CI logs.
+    """
+    proc = subprocess.run(
         ["git", "-C", str(repo), *args],
-        capture_output=True, text=True, check=check,
+        capture_output=True, text=True, check=False,
     )
+    if check and proc.returncode != 0:
+        raise subprocess.CalledProcessError(
+            proc.returncode, proc.args,
+            output=proc.stdout, stderr=proc.stderr or f"git {' '.join(args)} failed",
+        )
+    return proc
 
 
 def init_repo(
