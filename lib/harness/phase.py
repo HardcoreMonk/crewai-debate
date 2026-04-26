@@ -1,11 +1,65 @@
-"""Harness phase executor — the CLI entry for running `plan`, `impl`, `commit`.
+"""Harness phase executor — CLI entry for the 10-phase pipeline.
+
+[주니어 개발자 안내]
+하네스의 메인 orchestrator. 10개의 `cmd_*` 함수가 각 phase를 구현하고,
+공통 helper 30+개가 그 위에서 동작. CLI 진입점은 파일 끝의 `if
+__name__ == "__main__":` 블록의 argparse — subcommand 이름이 `cmd_<X>`로
+직접 매핑된다.
+
+Phase 분류 (DESIGN §14.1):
+- Implement-task: plan → impl → commit → adr (옵션) → pr-create
+- Review-task: review-wait → review-fetch → review-apply → review-reply → merge
+
+각 phase는 동일한 envelope을 따른다:
+1. `state.load_state(slug)` 또는 `state.init_*_state(...)` — 상태 복원/생성.
+2. `_require_prev_phase_completed(s, phase)` — 직전 phase 완료 강제.
+3. `state.start_attempt(s, phase)` — attempt 슬롯 생성, status=running.
+4. 본 작업 (LLM 호출 / git / gh / parser).
+5. `state.finish_attempt(...)` + `state.set_phase_status(...)` — 완료.
+6. 실패 시 `fatal()` (state는 attempts 추가된 채로 보존되어 디버깅 가능).
+
+핵심 헬퍼 군:
+- Plan markdown 처리: `parse_section`, `parse_plan_files`,
+  `validate_plan_markdown`, `validate_plan_consistency`.
+- Persona/prompt 빌드: `read_persona`, `build_plan_prompt`,
+  `build_impl_prompt`, `_read_design_sidecar` (ADR-0003).
+- Git 인터페이스: `git()`, `ensure_clean_repo()`, `reset_target_repo()`,
+  `_current_branch()`, `_require_feature_branch()`, `push_branch_via_gh_token()`,
+  `_git_commit_with_author()`.
+- 보안: `_sanitize_token()`, `_sanitize_completed()` — gh 토큰 leak 방지.
+- 정책 helper: `_resolve_impl_timeout()`, `_extend_deadline_for_rate_limit()`.
+
+각 cmd_ 함수의 docstring은 phase별 ADR + §13.6 friction 참조 포함.
+
+[비전공자 안내]
+하네스가 작업을 수행하는 "심장". 운영자가 `phase.py plan` 같은 명령을
+치면 이 파일의 어떤 함수가 깨어나서:
+- 이전 단계까지의 진행 상황(state.json)을 읽고,
+- 필요하면 AI(claude)에게 일을 시키고,
+- git/GitHub 명령으로 코드를 만들거나 PR을 열고,
+- 결과를 다시 state.json에 기록한 다음 끝낸다.
+
+10개의 단계가 모두 같은 형식(작업 시작→실행→끝남 기록)을 따르므로
+한 단계의 코드를 이해하면 나머지 9개도 비슷하게 보인다.
 
 Usage:
+    # Implement-task chain
     python lib/harness/phase.py plan  <task-slug> --intent "<text>" --target-repo <path>
-    python lib/harness/phase.py impl  <task-slug>
+    python lib/harness/phase.py impl  <task-slug>     # [--impl-timeout NUM]
     python lib/harness/phase.py commit <task-slug>
+    python lib/harness/phase.py adr <task-slug>       # [--auto-commit] [--adr-width N]
+    python lib/harness/phase.py pr-create <task-slug> --base main
 
-See docs/harness/DESIGN.md §7 for the phase contracts this implements.
+    # Review-task chain (after a PR is opened)
+    python lib/harness/phase.py review-wait review-<slug> --pr N --base-repo <owner/repo> \\
+        --target-repo <path> [--rate-limit-auto-bypass] [--silent-ignore-recovery]
+    python lib/harness/phase.py review-fetch review-<slug>
+    python lib/harness/phase.py review-apply review-<slug>
+    python lib/harness/phase.py review-reply review-<slug>
+    python lib/harness/phase.py merge review-<slug>   # [--dry-run]
+
+See docs/harness/DESIGN.md §7 (phase contracts) + §14 (canonical as-built)
++ §13.6 (friction tracker) for design rationale and historical context.
 """
 from __future__ import annotations
 
@@ -28,17 +82,25 @@ CREWAI_ROOT = _HERE.parents[1]
 PERSONAS_DIR = CREWAI_ROOT / "crew" / "personas"
 CHECKS_SCRIPT = _HERE / "checks.sh"
 
+# Phase별 기본 timeout(초). LLM 호출 phase(plan/impl/adr/review-apply)는 길고,
+# 순수 git/gh phase는 짧다. impl은 `--impl-timeout` 또는 HARNESS_IMPL_TIMEOUT
+# 으로 task별 override 가능 (§13.15 large-surface 대응, PR #45).
+# 비전공자: 각 단계가 최대 몇 초까지 일할 수 있는지의 시간 제한.
 PHASE_TIMEOUTS = {
     "plan": 120, "impl": 600, "commit": 30, "adr": 180, "pr-create": 60,
     "review-wait": 600, "review-fetch": 60, "review-apply": 1800,
     "review-reply": 30, "merge": 120,
 }
+# Phase별 retry 횟수 (실패 시 재시도). LLM phase는 self-fix 가능하므로 N>1,
+# 결정론적 phase(commit/pr-create/merge)는 1번만 — 같은 입력엔 같은 결과.
 PHASE_MAX_ATTEMPTS = {
     "plan": 2, "impl": 3, "commit": 1, "adr": 2, "pr-create": 1,
     "review-wait": 1, "review-fetch": 2, "review-apply": 1,
     "review-reply": 2, "merge": 1,
 }
 
+# review-wait이 GitHub API를 폴링하는 간격(초). 짧으면 GitHub rate-limit 위험,
+# 길면 review 완료 후 응답 latency. 45초가 균형점.
 REVIEW_POLL_INTERVAL_SEC = 45
 REVIEW_MAX_ROUND = 2        # autofix re-review loop cap (§2 decision)
 APPLY_RETRY_PER_COMMENT = 2  # implementer self-fix cap on a single comment
@@ -46,6 +108,7 @@ APPLY_RETRY_PER_COMMENT = 2  # implementer self-fix cap on a single comment
 # review-wait deadline forward by this much (once per invocation). 30 min is
 # the typical free-plan window; longer would risk the operator forgetting
 # the run is in flight.
+# 비전공자: rate-limit 발생 시 한 번에 30분 더 기다리도록 데드라인 연장.
 RATE_LIMIT_EXTENSION_SEC = 1800
 
 
@@ -547,6 +610,36 @@ def _git_commit_with_author(
 
 
 def cmd_plan(args) -> int:
+    """Phase 1 — `plan`: 1-line intent + repo inspection → `plan.md`.
+
+    [주니어 개발자]
+    LLM에게 planner persona(`crew/personas/planner.md`)를 로드시키고
+    intent + target repo의 컨텍스트를 prompt로 빌드해 `plan.md`를 받음.
+    PHASE_MAX_ATTEMPTS["plan"]=2 — validation 실패 시 self-fix 1회 허용.
+
+    Pre-checks (각각 fatal):
+    - `--intent` / `--target-repo` 인자 검증.
+    - target_repo가 .git을 가진 git repo여야 함.
+    - `_require_feature_branch` (§13.6 #14): main/master 거부.
+
+    ADR-0003 sidecar: `state/harness/<slug>/design.md`가 사전에 있으면
+    `_read_design_sidecar`가 읽어 prompt에 "## Approved design context
+    (do not deviate)" 섹션으로 prepend — debate-bridge 워크플로 호환.
+
+    Validation 단계 (각 attempt):
+    1. `validate_plan_markdown` — 4 섹션(`## files`, `## changes`, `## tests`,
+       `## out-of-scope`) 형식 검증.
+    2. `validate_plan_consistency` — `## changes`의 path token이
+       target_repo에 실재하는지 cross-check (warn-only by default,
+       `--strict-consistency`로 fatal 승격).
+    3. tests command 검증 — `validate_tests_command` (shell 안전성).
+
+    [비전공자]
+    "이 작업을 어떻게 할지" 계획표(plan.md)를 AI에게 작성시키는 단계.
+    intent("CHANGELOG 추가" 같은 한 줄)와 작업할 코드 폴더를 입력하면,
+    AI가 "어떤 파일을 만들고 어떻게 고칠지"를 markdown으로 정리. 이
+    plan.md를 다음 단계(impl)가 그대로 따라 실행한다.
+    """
     if not args.intent or not args.target_repo:
         fatal("plan requires --intent and --target-repo")
     target_repo = Path(args.target_repo).resolve()
@@ -652,6 +745,34 @@ def _resolve_impl_timeout(args) -> int:
 
 
 def cmd_impl(args) -> int:
+    """Phase 2 — `impl`: plan.md를 따라 target_repo에 실제 코드 변경 적용.
+
+    [주니어 개발자]
+    LLM에게 implementer persona를 로드시키고 plan.md + target_repo working
+    tree를 컨텍스트로 prompt 빌드. claude가 직접 파일을 수정 (Edit/Write
+    tool). PHASE_MAX_ATTEMPTS["impl"]=3 — self-fix 2회 허용.
+
+    Pre-checks:
+    - plan phase가 completed여야 함 (직전 phase invariant).
+    - impl이 이미 completed이면 거부 (idempotency — 의도치 않은 재실행 방지).
+    - `_require_feature_branch` (§13.6 #14).
+    - `validate_tests_command(plan.md::tests)` — 빈/안전하지 않은 cmd 거부.
+    - `ensure_clean_repo` (§13.6 #16) — tracked-modified는 fatal, untracked OK.
+
+    Attempt 루프 (재시도 시):
+    - 첫 번째가 아니면 `reset_target_repo` — plan 시작 SHA로 working tree
+      되돌림 (이전 attempt가 만든 더러운 상태 제거).
+    - timeout은 `_resolve_impl_timeout(args)` — `--impl-timeout` flag 또는
+      HARNESS_IMPL_TIMEOUT env var 우선, fallback PHASE_TIMEOUTS["impl"].
+    - 종료 후 plan.md::tests 명령으로 semantic 검증 (실패 시 prev_failure_log
+      를 다음 attempt prompt에 inject — implementer가 self-fix 가능).
+
+    [비전공자]
+    plan 단계의 계획표를 받아 AI가 실제로 코드를 수정하는 단계. 각 시도
+    마다 작업 폴더를 plan 시점으로 되돌린 뒤 처음부터 다시 적용 — 그래야
+    이전 시도의 부분적 변경이 다음 시도와 섞이지 않음. 검증 명령
+    (plan.md의 tests cmd)이 통과해야 완료로 인정.
+    """
     s = state.load_state(args.task_slug)
     if s["phases"]["plan"]["status"] != state.STATUS_COMPLETED:
         fatal("plan phase not completed — run `plan` first")
@@ -735,6 +856,27 @@ def cmd_impl(args) -> int:
 
 
 def cmd_commit(args) -> int:
+    """Phase 3 — `commit`: impl이 만든 변경을 plan.md::files만 staged + 1개 commit.
+
+    [주니어 개발자]
+    LLM 호출 없는 deterministic phase. plan.md의 `## files` 섹션을 single
+    source of truth로 사용 — 그 외 파일이 working tree에 있으면 fatal
+    (impl이 plan을 벗어남, §13.6 #7-2 plan-boundary diff 검증).
+
+    Commit message: `extract_commit_title(plan_text, slug)` + body는
+    `extract_commit_body(plan_text)` — plan.md의 첫 번째 H1을 title로,
+    나머지 prose를 body로 사용. `_annotate_with_harness_trailer`가 끝에
+    `Co-Authored-By: crewai-harness <harness-mvp@local>` 추가하여
+    하네스 출처 추적 가능.
+
+    Author rotation: HARNESS_GIT_AUTHOR_NAME / _EMAIL env var 있으면
+    `_git_commit_with_author`가 그 author로 commit (zone에서 multi-account
+    운영 가능, RUNBOOK 참조).
+
+    [비전공자]
+    AI가 만든 변경을 git에 한 번의 commit으로 묶어 저장. 계획표에 적힌
+    파일만 commit하고 그 외는 거부 — 계획에서 벗어난 부산물이 끼지 않도록.
+    """
     s = state.load_state(args.task_slug)
     if s["phases"]["impl"]["status"] != state.STATUS_COMPLETED:
         fatal("impl phase not completed — run `impl` first")
@@ -858,6 +1000,31 @@ def _build_adr_commit_message(adr_body: str, num_str: str) -> str:
 
 
 def cmd_adr(args) -> int:
+    """Phase 3.5 (옵션) — `adr`: plan.md를 ADR로 정형화.
+
+    [주니어 개발자]
+    Implement-task만 — review-task엔 plan.md 없으므로 N/A. plan과 commit
+    사이 또는 commit 후에 호출 가능 (의존성: plan만 completed면 충분).
+    `state.ensure_phase_slot(s, "adr")` — back-compat: 옛 task의 state.json
+    에 adr 슬롯 없으면 동적 추가.
+
+    ADR 파일명/번호 결정:
+    - `_find_adr_dir(target_repo)` — `docs/adr/` 자동 탐색.
+    - `_next_adr_number(adr_dir, override_width=args.adr_width)` —
+      §13.6 #7-1: 기존 파일들의 zero-pad width를 자동 감지하거나 flag override.
+
+    `--auto-commit` flag (§13.6 #7-4):
+    - True: ADR 파일 작성 후 `_git_commit_with_author`로 자체 commit
+      (`docs(adr): NNNN: <title>` 메시지). cmd_commit 우회 — adr commit이
+      별도 atomic 단위.
+    - False (기본): 파일만 작성, commit은 운영자가 다음 cmd_commit 또는
+      별도 처리.
+
+    [비전공자]
+    "왜 이런 결정을 했는가"를 기록하는 ADR(Architecture Decision Record)
+    문서를 plan.md를 바탕으로 자동 작성. 모든 task에서 만들 필요는 없고
+    구조적 결정이 있을 때만 옵션으로 사용.
+    """
     s = state.load_state(args.task_slug)
     if s.get("task_type") != state.TASK_TYPE_IMPLEMENT:
         fatal(f"adr is only for implement tasks (task_type={s.get('task_type')!r})")
@@ -1002,6 +1169,27 @@ def _build_pr_body(plan_text: str, s: dict) -> str:
 
 
 def cmd_pr_create(args) -> int:
+    """Phase 4 — `pr-create`: feature branch push + GitHub PR 오픈.
+
+    [주니어 개발자]
+    Implement-task의 마지막 phase. Pre-checks:
+    - task_type == implement (review-task 막음).
+    - commit phase completed.
+    - `_require_feature_branch` (§13.6 #14): main/master HEAD 거부, branch
+      이름은 reuse (rev-parse 한 번만 — 중복 호출 방지, /simplify pass).
+
+    GitHub 토큰 sanitation (`_sanitize_token` / `_sanitize_completed`):
+    - `gh auth token`으로 push 시 token이 git error stderr에 노출될 수
+      있음. 모든 subprocess 출력을 redact 후 log에 기록.
+
+    PR body는 `_build_pr_body(plan_text, state)`가 plan.md 본문 + harness
+    표식 + auto-bypass 가이드 prepend.
+
+    [비전공자]
+    feature branch를 GitHub에 push하고 그 위에 새 PR을 만든다. 이 단계가
+    끝나면 사람이 아닌 CodeRabbit 봇이 자동으로 review를 시작 — 다음 단계
+    review-wait이 그 결과를 기다린다.
+    """
     s = state.load_state(args.task_slug)
     if s.get("task_type") != state.TASK_TYPE_IMPLEMENT:
         fatal(f"task {args.task_slug!r} is not an implement-task")
@@ -1271,6 +1459,46 @@ def _run_auto_bypass_commit_fallback(
 
 
 def cmd_review_wait(args) -> int:
+    """Phase 5 (review chain 시작) — CodeRabbit이 review를 발행할 때까지 폴링.
+
+    [주니어 개발자]
+    Review-task의 첫 phase. 가장 복잡한 state machine — DESIGN §13.6의 절반이
+    이 함수에서 발생한 friction (rate-limit / decline / silent-ignore /
+    composite path). ARCHITECTURE.md §3에 시각화된 stateDiagram 참고.
+
+    Init-if-absent: 첫 호출이면 `init_review_state`로 state 생성, 재호출(round 2)
+    이면 `load_state`로 복원. `--pr`/`--base-repo`/`--target-repo`는 첫 호출에만 필수.
+
+    Pre-flight: `gh.pr_view`로 PR이 OPEN 상태인지 확인, head_branch 추출 후
+    state에 저장. `_extract_head_branch_from_pr` — review-apply가 `_ensure_on_head_branch`
+    로 검증할 때 anchor.
+
+    Cross-round staleness gate (§13.6 #7-7): `seen_review_id_max` /
+    `seen_issue_comment_id_max` watermark로 round 2에서 round 1의 review를
+    재처리하지 않도록 monotone 가드.
+
+    폴링 루프 (REVIEW_POLL_INTERVAL_SEC=45s):
+    1. `gh.list_reviews` + `gh.list_issue_comments` fetch.
+    2. `coderabbit.classify_review_object` / `classify_review_body`로 분류:
+       - complete/skipped/failed → exit OK.
+       - rate-limit marker (§13.6 #7-8) → deadline 1800s 연장 (1회).
+       - incremental decline marker (§13.6 #7-8 follow-up) → B3-1d hybrid
+         stage 2 (marker file commit + push).
+    3. `--rate-limit-auto-bypass` 또는 env=1: rate-limit 감지 시 즉시
+       stage 1 (`@coderabbitai review` post) 시도, 거절 시 stage 2.
+    4. `time.monotonic() >= deadline` → break.
+
+    Post-deadline branch (ADR-0004): `--silent-ignore-recovery` flag가
+    set이고 round=1이고 auto-bypass 시도(manual OR commit_pushed) 있었으면:
+    - `gh.close_pr` + `gh.reopen_pr` + `state.bump_round` + recursive
+      `cmd_review_wait(args)` (single-shot).
+
+    [비전공자]
+    PR을 열고 나면 CodeRabbit 봇이 자동으로 review를 시작하는데, 이 단계가
+    그 결과가 올 때까지 기다린다. 보통 몇 분이지만, 봇이 바쁠 때(rate-limit)
+    또는 응답이 없을 때(silent-ignore)를 위해 자동 회복 로직이 들어있다.
+    가장 복잡한 단계이지만 일단 잘 작동하면 사람이 손댈 일이 거의 없다.
+    """
     # Init-if-absent
     try:
         s = state.load_state(args.task_slug)
@@ -1603,6 +1831,23 @@ def cmd_review_wait(args) -> int:
 
 
 def cmd_review_fetch(args) -> int:
+    """Phase 6 — `review-fetch`: review-wait이 식별한 review의 inline comments를 다운로드.
+
+    [주니어 개발자]
+    `gh.list_inline_comments`로 inline endpoint fetch + filter (CodeRabbit
+    author만). `actionable_count > len(bot_comments)` 일 때 §13.6 #12
+    fallback 발동 — `coderabbit.extract_body_embedded_inlines`가 review body
+    안 details 블록에서 synthetic comment 합성하여 union.
+
+    각 raw comment를 `coderabbit.parse_inline_comment` → InlineComment dataclass
+    → JSON-friendly dict로 변환하여 `state/harness/<slug>/comments.json` 저장.
+    review-apply가 이 파일을 단일 입력 소스로 사용.
+
+    [비전공자]
+    리뷰 결과의 줄별 코멘트를 GitHub에서 다운받아 한 파일(comments.json)로
+    정리. 다음 단계(review-apply)가 이 파일을 보고 자동 적용 가능한 것을
+    골라 패치.
+    """
     s = _load_review_state_or_die(args.task_slug)
     _require_prev_phase_completed(s, "review-fetch")
     if s["phases"]["review-fetch"]["status"] == state.STATUS_COMPLETED:
@@ -1845,6 +2090,31 @@ def discover_validator(repo: Path) -> tuple[str, list[str] | None]:
 
 
 def cmd_review_apply(args) -> int:
+    """Phase 7 — `review-apply`: comments.json의 auto-applicable 코멘트를 자동 적용 + commit + push.
+
+    [주니어 개발자]
+    각 auto_applicable=True 코멘트를:
+    1. implementer persona + 단일 코멘트 prompt → claude가 해당 파일을 직접 수정.
+    2. semantic check via `discover_validator` (precedence: 커스텀
+       `.harness/validate.sh` > pyproject.toml에 pytest 감지되면 pytest >
+       syntax-only fallback) → 통과 시 staged + commit (코멘트 1개당 1 commit).
+    3. 통과 못 하면 `git reset`으로 working tree 되돌리고
+       `skipped_comment_ids`에 reason 기록 (cmd_merge gate가 차단).
+
+    `_ensure_on_head_branch` (state.head_branch) — review-task가 다른 branch에서
+    돌면 fatal. apply가 잘못된 branch에 commit하지 않도록 안전망.
+
+    push: 모든 적용된 commit을 한 번에 origin/<head_branch>로 push (
+    `push_branch_via_gh_token`). CodeRabbit이 fresh SHA에서 자동 re-review.
+
+    skipped_comment_ids: cmd_merge gate가 unresolved_non_auto 카운트에 포함하여
+    삭제 못한 코멘트가 있으면 머지 차단 — operator 수동 처리 필요.
+
+    [비전공자]
+    리뷰 코멘트 중 안전하게 자동 적용 가능한 것들을 AI가 한 개씩 코드에
+    반영하고 git commit으로 묶어 push. 적용 못 한 것은 별도 표시되어 사람이
+    수동 처리.
+    """
     s = _load_review_state_or_die(args.task_slug)
     _require_prev_phase_completed(s, "review-apply")
     if s["phases"]["review-apply"]["status"] == state.STATUS_COMPLETED:
@@ -1923,6 +2193,21 @@ def cmd_review_apply(args) -> int:
 
 
 def cmd_review_reply(args) -> int:
+    """Phase 8 — `review-reply`: review-apply 결과를 PR conversation에 한 줄 보고.
+
+    [주니어 개발자]
+    `gh.post_pr_comment`로 단일 top-level comment 게시. body는
+    applied/skipped 통계 + 각 skipped의 reason 요약. CodeRabbit과 사람
+    reviewer가 자동화 진행 상황을 한 곳에서 확인 가능.
+
+    `state.set_posted_reply(comment_id)` — 다시 호출 안 되도록 idempotent
+    표식. 이 phase는 단순 보고 — 실패해도 review-apply 결과 자체는 영향 없음.
+
+    [비전공자]
+    "리뷰 코멘트 X개를 적용했고 Y개는 사람 검토 필요" 같은 한 줄 진행 보고를
+    PR 대화창에 자동 게시. 사람 운영자가 추가 확인이 필요한지 판단할 때
+    참고.
+    """
     s = _load_review_state_or_die(args.task_slug)
     _require_prev_phase_completed(s, "review-reply")
     if s["phases"]["review-reply"]["status"] == state.STATUS_COMPLETED:
@@ -1960,6 +2245,29 @@ def cmd_review_reply(args) -> int:
 
 
 def cmd_merge(args) -> int:
+    """Phase 9 (review chain 종착) — `merge`: gate 검증 후 squash-merge.
+
+    [주니어 개발자]
+    Merge gate (모두 통과해야 merge 진행, §14.7 reference):
+    1. `gh.is_pr_mergeable(pr)` — mergeable=MERGEABLE + mergeStateStatus=CLEAN +
+       reviewDecision unset-or-APPROVED + 모든 required check pass.
+    2. `gh.fetch_live_review_summary` — LIVE PR을 다시 walk해서
+       `unresolved_non_auto > 0`이면 차단 (Major/Critical 수동 처리 필요).
+    3. `skipped_comments > 0` (state["phases"]["review-apply"]["skipped_comment_ids"])
+       이면 차단 — auto-apply 실패한 코멘트가 있음.
+
+    Dry-run (ADR-0002): `--dry-run` flag면 gate만 평가하고
+    `merge_sha=None, dry_run=True` 로 phase 완료 마크. 동일 task에서 후속
+    실 merge 호출 허용 (재실행 가드: `dry_run is False or merge_sha` 일 때만 fatal).
+
+    실 merge: `gh.merge_pr(strategy="squash")` → merge SHA 추출 → `state.set_merge_result`.
+
+    [비전공자]
+    PR을 main 브랜치에 합치는 마지막 단계. 합치기 전 여러 안전장치를 검사:
+    GitHub가 머지 가능하다고 하는가, CI가 통과했는가, 사람이 검토해야 할
+    심각한 코멘트가 남아있는가. `--dry-run` 옵션으로 미리 시뮬레이션 가능 —
+    실제 머지하지 않고 어디가 막히는지만 확인.
+    """
     s = _load_review_state_or_die(args.task_slug)
     _require_prev_phase_completed(s, "merge")
     merge_phase = s["phases"]["merge"]
