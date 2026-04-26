@@ -2095,9 +2095,11 @@ def cmd_review_apply(args) -> int:
     [주니어 개발자]
     각 auto_applicable=True 코멘트를:
     1. implementer persona + 단일 코멘트 prompt → claude가 해당 파일을 직접 수정.
-    2. plan.md::tests semantic check → 통과 시 staged + commit (코멘트 1개당 1 commit).
-    3. 통과 못 하면 `_run_auto_bypass_commit_fallback` 패턴 — `git reset` 으로
-       working tree 되돌리고 skipped_comment_ids에 reason 기록.
+    2. semantic check via `discover_validator` (precedence: 커스텀
+       `.harness/validate.sh` > pyproject.toml에 pytest 감지되면 pytest >
+       syntax-only fallback) → 통과 시 staged + commit (코멘트 1개당 1 commit).
+    3. 통과 못 하면 `git reset`으로 working tree 되돌리고
+       `skipped_comment_ids`에 reason 기록 (cmd_merge gate가 차단).
 
     `_ensure_on_head_branch` (state.head_branch) — review-task가 다른 branch에서
     돌면 fatal. apply가 잘못된 branch에 commit하지 않도록 안전망.
