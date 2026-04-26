@@ -33,7 +33,7 @@ The decision below picks systemd plus the wrapper.
 The harness ships **`ops/systemd/harness-cron-tick.{service,timer}`** as
 templates installable to `~/.config/systemd/user/`. The timer fires
 `OnBootSec=5min` (so reboots don't immediately storm GitHub's API),
-then `OnUnitActiveSec=7min ±60s` jitter (`RandomizedDelaySec=60`,
+then `OnUnitActiveSec=7min` + up to 60s of randomized delay (`RandomizedDelaySec=60` is unidirectional 0..60s per systemd.timer(5),
 `AccuracySec=10s`). 7 minutes is coprime with GitHub's documented
 60 s / 60 min rate windows; the jitter prevents fleet-wide clustering on
 the wall-clock minute.

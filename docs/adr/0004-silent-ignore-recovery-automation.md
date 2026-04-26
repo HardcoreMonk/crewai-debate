@@ -25,7 +25,7 @@ Two production runs exposed a fourth subtype that the hybrid does not cover
 In both, `review-wait` consumes its 600s + 1800s deadline-extension budget
 and exits `failed`. Operators recovered both times by:
 
-```
+```bash
 gh pr close <n> && gh pr reopen <n>
 state.bump_round  # reset per-round phase status, preserve watermarks
 phase.py review-wait <slug> ...   # round 2 with same flags
