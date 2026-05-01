@@ -78,9 +78,10 @@ The wrapper itself is conservative-by-default:
   `state/harness/cron-tick.log`, `state/harness/<slug>/logs/review-wait-N.log`,
   and `journalctl --user -u harness-cron-tick.service`. RUNBOOK section
   "Cron-tick auto-poller" lists each.
-- **Negative — host-coupled**: the unit templates assume the clone lives
-  at `~/projects/claude-zone/crewai`. Operators on different layouts
-  must edit the unit before installing. Documented in RUNBOOK.
+- **Negative — host-coupled**: the original unit templates assumed a fixed
+  clone path. Operators on different layouts, including the current
+  `/data/projects/codex-zone/crewai` checkout, must edit the unit before
+  installing. Documented in RUNBOOK.
 - **Negative — review-wait only**: tasks stuck mid-`review-fetch` or
   later won't auto-advance. Conservative on purpose; if production
   experience proves the next phases are safe to schedule, a follow-up

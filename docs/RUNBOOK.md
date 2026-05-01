@@ -21,8 +21,14 @@ systemctl --user restart openclaw-gateway.service && sleep 20 && openclaw health
 ```
 
 **Verify:**
-1. `openclaw health` prints `Discord: ok (@crewai-debate)` and no ACP / binding errors.
-2. Post a one-line smoke in `#crew-master` that exercises the change (e.g. `@codex-critic probe: 현재 인자 스펙 확인` after editing `crew-dispatch.sh`). Confirm the worker channel receives the task and the response shape matches the new helper.
+1. Local-only baseline: `openclaw config validate`, `openclaw gateway status`,
+   and `openclaw channels status` succeed. Current local config has no Discord
+   channel account, so `openclaw health` may report non-Discord channels as not
+   configured.
+2. Discord-enabled deployment: post a one-line smoke in `#crew-master` that
+   exercises the change (e.g. `@critic probe: 현재 인자 스펙 확인` after editing
+   `crew-dispatch.sh`). Confirm the worker channel receives the task and the
+   response shape matches the new helper.
 
 **Caveat:** Restart drops any in-flight worker CLI dispatches (background `codex exec` / `claude --print` processes survive since they were spawned via `setsid`, but their reply posts go through `openclaw message send` — if the gateway is down during the post, the helper's retry-less send fails and the reply is lost, only remaining in `/tmp/crew-dispatch-*.log`). Don't restart while a dispatch is in flight unless you're willing to lose that reply. Check for live helper processes first:
 
@@ -40,7 +46,104 @@ If any are active and their log's `completed:` line isn't written yet, wait befo
 rm -f /home/hardcoremonk/.openclaw/workspace/crew/state/<worker>-last.txt
 ```
 
-Valid `<worker>` values: `codex-critic`, `claude-coder`, `codex-ue-expert`.
+Common legacy `<worker>` values: `codex-critic`, `claude-coder`,
+`codex-ue-expert`. Canonical configured names such as `developer`, `critic`,
+`ue-expert`, `qa`, and `qc` also have cache files after their first dispatch.
+
+## Discord multi-bot account setup
+
+**When:** Before running the product service in Discord. The required accounts
+are `crewai-bot`, `codexai-bot`, and `claudeai-bot`.
+
+**Prerequisites:**
+- Each Discord application/bot has been created in the Discord Developer Portal.
+- Each bot is invited to the target guild and has read/send permissions in the
+  Director and worker channels it serves.
+- Message Content intent is enabled if the bot must read user-authored command
+  text.
+- Bot tokens are provided as secrets or environment variables, never committed.
+
+**Register OpenClaw channel accounts:**
+
+```bash
+openclaw channels add --channel discord --account crewai-bot \
+  --name crewai-bot --bot-token "$CREWAI_DISCORD_BOT_TOKEN"
+openclaw channels add --channel discord --account codexai-bot \
+  --name codexai-bot --bot-token "$CODEXAI_DISCORD_BOT_TOKEN"
+openclaw channels add --channel discord --account claudeai-bot \
+  --name claudeai-bot --bot-token "$CLAUDEAI_DISCORD_BOT_TOKEN"
+```
+
+If the deployment uses token files instead of environment variables, use
+`--token-file <path>` for each account.
+
+**Verify:**
+
+```bash
+openclaw channels list
+openclaw channels status
+openclaw message send --channel discord --account crewai-bot \
+  --target <director-channel-id> --message "crewai-bot smoke"
+openclaw message send --channel discord --account codexai-bot \
+  --target <worker-channel-id> --message "codexai-bot smoke"
+openclaw message send --channel discord --account claudeai-bot \
+  --target <developer-channel-id> --message "claudeai-bot smoke"
+```
+
+**Config linkage:** In local `crew/agents.json`, set
+`director_channel.discord_account_id` to `crewai-bot` and set each agent's
+`discord_account_id` to the bot that should visibly post that worker's output.
+The committed `crew/agents.example.json` shows the expected mapping.
+
+## Local crew orchestration without Discord
+
+**When:** Develop or recover the Director workflow before Discord channel
+account setup is available.
+
+Create a deterministic task graph:
+
+```bash
+python3 lib/crew/director.py --request "Implement the requested change"
+```
+
+Inspect resumable work:
+
+```bash
+python3 lib/crew/sweep.py
+python3 lib/crew/sweep.py --json
+```
+
+Only run rows whose `ready` value is true. Rows with `blocked_by` are waiting
+for dependency tasks to complete.
+
+Dispatch a ready task from job state:
+
+```bash
+python3 lib/crew/dispatch.py --job-id <job-id> --task-id <task-id> --agent <worker> --task-from-job
+```
+
+`--task-from-job` enforces `depends_on`. Completed dependency artifacts are
+added to the worker prompt automatically, while the stored task prompt remains
+stable in `job.json`.
+
+Check the delivery gate:
+
+```bash
+python3 lib/crew/gate.py <job-id>
+python3 lib/crew/gate.py <job-id> --require-final-result
+```
+
+Create the Director final artifact and close a delivery-ready job:
+
+```bash
+python3 lib/crew/finalize.py <job-id>
+python3 lib/crew/finalize.py <job-id> --json
+```
+
+Finalization first runs the QA/QC gate without requiring an existing final
+artifact. If the gate passes, it writes `state/crew/<job-id>/artifacts/final.md`,
+sets `final_result_path` to `artifacts/final.md`, re-runs the gate with
+`--require-final-result`, and marks the job `delivered`.
 
 ## Diagnosing a missing reply
 
@@ -172,7 +275,7 @@ For unattended re-poll of in-progress review tasks, install the systemd `--user`
 ```bash
 mkdir -p ~/.config/systemd/user
 cp ops/systemd/harness-cron-tick.{service,timer} ~/.config/systemd/user/
-# Edit the unit if your clone is not at ~/projects/claude-zone/crewai
+# Edit the unit if your clone is not at /data/projects/codex-zone/crewai
 systemctl --user daemon-reload
 systemctl --user enable --now harness-cron-tick.timer
 systemctl --user list-timers | grep harness   # verify next-fire time

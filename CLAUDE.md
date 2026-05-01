@@ -1,21 +1,33 @@
 @../CLAUDE.md
 
-# crewai-debate + harness — 프로젝트 규약 (L4)
+# crewai — 프로젝트 규약 (L4)
 
-L3(`~/projects/claude-zone/CLAUDE.md`)와 L2(`~/projects/CLAUDE.md`)를 `@`-import로 상속. 응답 스타일·언어 최소 버전·git 관례·zone 운영 자산은 상위 레이어에서. 이 파일은 crewai 프로젝트 고유 사항만.
+첫 줄의 `@../CLAUDE.md`로 `/data/projects/codex-zone/CLAUDE.md`를 상속한다.
+Codex의 기준 문서는 `AGENTS.md`이며, 이 파일은 Claude Code 호환 레이어다.
+응답 스타일·언어·git 관례·zone 운영 자산은 상위 zone 규약을 따르고, 여기에는
+crewai 프로젝트 고유 사항만 둔다.
 
-## Two-track 구조 요약
+## Product Priority
 
-이 repo는 **Debate** 트랙과 **Harness** 트랙이 자산 공유 + 런타임 분리로 병설된 구조. 진입점:
+이 repo의 핵심 제품은 **Discord-first multi-agent orchestration**이다. 사용자가 Discord에서 Director에게 업무를 지시하면 Director가 기획, 개발, 디자인, QA, QC, 리뷰, 문서화 에이전트를 조율하고 결과를 Discord 안에서 회수/전달한다.
+
+Harness는 제품 표면이 아니라 개발 에이전트가 필요할 때 사용하는 내부 git/PR 워크플로 도구다. 하네스 문서와 테스트가 가장 크더라도, 사용자-facing 판단은 `docs/discord/ORCHESTRATION.md`와 ADR-0006/0007/0008을 우선한다.
+
+진입점:
 
 - 전체 개요·실행 예시: `README.md`
+- 문서 맵·우선순위: `docs/README.md`
+- Discord 제품 아키텍처: `docs/discord/ORCHESTRATION.md`
+- 제품 방향 ADR: `docs/adr/0006-discord-first-multi-agent-orchestration.md`
+- 로컬 orchestration controls ADR: `docs/adr/0007-local-crew-state-controls.md`
+- Discord multi-bot routing ADR: `docs/adr/0008-discord-multi-bot-account-routing.md`
 - 하네스 단일 진원지(canonical as-built): `docs/harness/DESIGN.md` §14
 - 시각화 cheatsheet (6 Mermaid 다이어그램): `docs/harness/ARCHITECTURE.md`
 - 운영 절차(rate-limit recovery, stacked PR, GC, cron-tick 등): `docs/RUNBOOK.md`
 - MVP-D 사전 조사 + CodeRabbit 포맷 카탈로그: `docs/harness/MVP-D-PREVIEW.md`
-- 아키텍처 결정 로그: `docs/adr/README.md` (ADR-0001 ~ 0005)
+- 아키텍처 결정 로그: `docs/adr/README.md` (ADR-0001 ~ 0008)
 
-DESIGN과 RUNBOOK이 충돌하면 **DESIGN §14가 진원지**.
+제품 방향이 충돌하면 **`docs/discord/ORCHESTRATION.md` + ADR-0006 + ADR-0007 + ADR-0008이 우선**. 하네스 내부 동작이 충돌하면 기존처럼 **DESIGN §14가 진원지**.
 
 ## Skill Routing (프로젝트 고유)
 
@@ -23,8 +35,16 @@ zone L3는 공통 routing만 명시. crewai 고유 skills:
 
 - `skills/crewai-debate/` — Discord 단일턴 Dev↔Reviewer 토론. 트리거: `debate:` / `crewai` / `토론:` 등 (자세한 prefix는 `skills/crewai-debate/SKILL.md`).
 - `skills/crewai-debate-harness/` — Bridge skill. 토론 + `state/harness/<slug>/design.md` sidecar 작성. **터미널/Claude Code/MCP context 전용** — Discord delivery layer가 trailing tool call을 drop하므로 Discord에서 invoke 금지. ADR-0003 참조.
-- `skills/crew-master/` — `#crew-master` 채널 worker dispatch (`codex-critic` / `claude-coder` / `codex-ue-expert`).
+- `skills/crew-master/` — 현재 `#crew-master` 채널 worker dispatch. Roster는 `crew/agents.json` / `crew/agents.example.json` 기반이며, 제품 목표상 이 skill은 Director 중심 오케스트레이터로 확장되어야 한다.
 - `skills/hello-debate/` — v1 sessions_spawn 스모크 + v3 format compliance checklist.
+
+## Discord Product Direction
+
+- Director가 사용자-facing 조율자다. 사용자에게 하네스 phase 이름을 노출하기보다 "기획 완료 / 개발 PR 생성 / QA 실패 / QC 승인" 같은 제품 수준 상태로 번역한다.
+- 신규 role persona: `crew/personas/director.md`, `product-planner.md`, `designer.md`, `qa.md`, `qc.md`, `docs-release.md`.
+- 기존 `critic.md`, `coder.md`, `ue-expert.md`는 product roster의 specialist worker로 유지하되 전체 모델은 세 worker에 고정하지 않는다.
+- 구현 완료 축: config-driven roster, 다중 Discord bot account routing(`crewai-bot`, `codexai-bot`, `claudeai-bot`), `state/crew/<job-id>/job.json`, worker busy lock, Director back-post summary, `lib/crew/director.py` task decomposition, dispatch dependency ordering, dependency artifact handoff, lifecycle status refresh, `lib/crew/sweep.py` resume inspection, `lib/crew/gate.py` QA/QC delivery gate, `lib/crew/finalize.py` final artifact delivery closeout.
+- 다음 구현 축: Discord multi-bot smoke after channel account setup, developer task harness handoff 고도화.
 
 ## 하네스 운영 단축키
 

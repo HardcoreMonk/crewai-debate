@@ -1,22 +1,41 @@
-# crewai-debate + harness
+# crewai — Discord multi-agent orchestration
 
-Two cooperating tracks in one repo:
+The product surface is **Discord-first multi-agent collaboration**. A user gives
+work to a Director in Discord; the Director dispatches planning, development,
+design, QA, QC, review, and docs/release work to specialist AI agents, tracks
+the job, and returns the final result in Discord.
 
-1. **Debate track** (`skills/crewai-debate/`, `skills/crew-master/`) — Discord-delivered Developer↔Reviewer debate on a coding topic. Personal dev workflow tool, optimized for Unreal Engine C++ plan review before writing code. Single-turn LLM persona switching.
-2. **Harness track** (`lib/harness/`, `crew/personas/{planner,implementer,adr-writer}.md`) — git-native multi-phase AI pipeline. MVP-A (`plan → impl → commit`) turns a one-line intent into a commit. MVP-B (`adr` / `pr-create`) adds ADR generation + PR opening. MVP-D (`review-wait → fetch → apply → reply → merge`) auto-applies CodeRabbit review feedback and gates merge. External script orchestrates; each phase spawns a headless `claude --print` invocation. First end-to-end self-dogfood landed 2026-04-25 as PR #3 — see DESIGN §13.8.
+Two supporting tracks live in this repo:
 
-See [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-PREVIEW.md`](docs/harness/MVP-D-PREVIEW.md) for the harness side, and the sections below for the debate side.
+1. **Discord orchestration track** (`skills/crew-master/`, `lib/crew/`, `lib/crew-dispatch.sh`, `crew/personas/`) — the user-facing product path. Current v0.3 is config-driven, records crew job state, routes delivery through multiple Discord bot accounts, and prevents concurrent runs for the same worker; ADR-0006 expands this into Director-led multi-agent orchestration.
+2. **Harness track** (`lib/harness/`, `crew/personas/{planner,implementer,adr-writer}.md`) — internal git-native development workflow used by coding agents when they need branch/commit/PR/review automation. It is not the primary service surface.
+
+Documentation map: [`docs/README.md`](docs/README.md). Canonical product
+direction: [`docs/discord/ORCHESTRATION.md`](docs/discord/ORCHESTRATION.md),
+[`docs/adr/0006-discord-first-multi-agent-orchestration.md`](docs/adr/0006-discord-first-multi-agent-orchestration.md),
+[`docs/adr/0007-local-crew-state-controls.md`](docs/adr/0007-local-crew-state-controls.md),
+and [`docs/adr/0008-discord-multi-bot-account-routing.md`](docs/adr/0008-discord-multi-bot-account-routing.md).
+
+Harness internals remain documented in [`docs/harness/DESIGN.md`](docs/harness/DESIGN.md) and [`docs/harness/MVP-D-PREVIEW.md`](docs/harness/MVP-D-PREVIEW.md).
 
 ## What's in here
 
-### Debate track
+Agent runtime guidance: [`AGENTS.md`](AGENTS.md). Claude-specific layered
+project guidance: [`CLAUDE.md`](CLAUDE.md).
+
+### Discord product track
+- `docs/discord/ORCHESTRATION.md` — canonical product architecture for Discord-first Director + specialist-agent collaboration.
+- `skills/crew-master/SKILL.md` — current multi-channel Discord dispatcher: `@mention` dispatches to configured specialist workers from `#crew-master`. This is the seed for the Director surface.
+- `lib/crew/` — config loading, Director decomposition, job state, dispatch implementation, busy locks, lifecycle refresh, local `crew-sweep` resume inspection, QA/QC delivery gate, and final-result closeout.
+- `lib/crew-dispatch.sh` — stable shell entrypoint that runs the target worker's CLI in its persona `cwd` and posts the reply to the worker's Discord channel through the configured bot account.
+- `crew/personas/{director,product-planner,designer,qa,qc,docs-release}.md` — product role personas for the target orchestration model.
+- `crew/personas/{critic,coder,ue-expert}.md` — existing specialist personas loaded by current workers via an `AGENTS.md` / `CLAUDE.md` symlink under `~/.openclaw/workspace/crew/<role>/`.
+
+### Debate support
 - `skills/crewai-debate/SKILL.md` — the production single-turn debate skill. One assistant response contains the full Dev↔Reviewer iterations and a final verdict block.
 - `skills/hello-debate/SKILL.md` — minimum-viable smoke test (one Dev + one Reviewer, no loop).
-- `skills/crew-master/SKILL.md` — multi-channel Discord crew: `@mention` dispatches to specialist workers (`codex-critic`, `claude-coder`, `codex-ue-expert`) from `#crew-master`. See the "Crew" section below for the full mechanics.
-- `lib/crew-dispatch.sh` — helper that runs the target worker's CLI in its persona `cwd` and posts the reply to the worker's Discord channel.
-- `crew/personas/{critic,coder,ue-expert}.md` — persona system prompts loaded by each worker via an `AGENTS.md` / `CLAUDE.md` symlink under `~/.openclaw/workspace/crew/<role>/`.
 
-### Harness track
+### Harness internals
 - `lib/harness/phase.py` — phase executor CLI. Subcommands: `plan`, `impl`, `commit`, `adr`, `pr-create`, `review-wait`, `review-fetch`, `review-apply`, `review-reply`, `merge` (10 phases).
 - `lib/harness/state.py` — per-task JSON state machine (`state/harness/<slug>/state.json`).
 - `lib/harness/runner.py` — `claude --print` headless wrapper shared by all LLM-invoking phases.
@@ -119,7 +138,7 @@ A future v4 could restore isolation by shelling out to `openclaw agent --session
 Add this repo's `skills/` directory to OpenClaw's skill search path:
 
 ```bash
-openclaw config set skills.load.extraDirs '["/home/hardcoremonk/projects/crewai/skills"]' --strict-json
+openclaw config set skills.load.extraDirs '["/data/projects/codex-zone/crewai/skills"]' --strict-json
 systemctl --user restart openclaw-gateway.service
 ```
 
@@ -129,7 +148,18 @@ Verify:
 openclaw skills list | grep crewai-debate
 ```
 
-Requires `channels.discord.groupPolicy = "open"` and `channels.discord.guilds.<guildId>.requireMention = false` for the Discord bot to respond to channel posts without being @-mentioned. See `memory/project_discord_integration.md` (in user's auto-memory) for the full config set applied 2026-04-19.
+Current local OpenClaw runtime is system Node based:
+
+- service: `openclaw-gateway.service`
+- gateway: `http://127.0.0.1:18789/`
+- service command: `/usr/bin/node /usr/local/lib/node_modules/openclaw/dist/index.js gateway --port 18789`
+- default model: `openai-codex/gpt-5.5`
+
+Discord channel account setup is a runtime deployment step. Product operation
+requires `crewai-bot`, `codexai-bot`, and `claudeai-bot` OpenClaw Discord
+accounts. As of the 2026-04-29 inspection, the local OpenClaw config had no
+configured Discord channel accounts; local crew state and dispatch controls
+remain usable without that integration.
 
 ## Usage
 
@@ -174,63 +204,60 @@ Wall clock: ~30–90s streamed to Discord as the response generates.
 
 ```
 skills/
-  crewai-debate/SKILL.md   # production single-turn debate (v3.2)
-  hello-debate/SKILL.md    # one-round smoke test
-  crew-master/SKILL.md     # multi-channel worker dispatcher (v0.1)
+  crew-master/SKILL.md          # config-driven Discord worker dispatcher
+  crewai-debate/SKILL.md        # production single-turn debate support
+  crewai-debate-harness/        # terminal-only debate-to-harness bridge
+  hello-debate/SKILL.md         # OpenClaw smoke test
 crew/
+  agents.example.json           # committed roster shape
+  agents.json                   # local deployment roster, gitignored
   personas/
-    critic.md coder.md ue-expert.md         # debate track personas
-    planner.md implementer.md adr-writer.md # harness track personas
-  CHANNELS.local.md        # gitignored channelId scratch
+    director.md product-planner.md designer.md qa.md qc.md docs-release.md
+    critic.md coder.md ue-expert.md
+    planner.md implementer.md adr-writer.md
+  CHANNELS.local.md             # gitignored channelId scratch
 lib/
-  crew-dispatch.sh         # debate worker CLI launcher + Discord poster
-  harness/                 # harness track
-    phase.py state.py runner.py coderabbit.py gh.py
-    gc.py                  # state/harness GC (2026-04-25, ADR-0001)
-    checks.sh
-    fixtures/coderabbit/   # parser self-test payloads
+  crew/                          # product orchestration controls
+    config.py state.py director.py dispatch.py sweep.py gate.py finalize.py
     tests/
-      mock_e2e.py          # network/LLM-free dry run
-      test_gc.py           # gc.py unit tests
-      test_gh_gate.py      # merge-gate unit tests (§13.6 #8)
-      test_coderabbit_zero_actionable.py  # zero-actionable parser tests (§13.6 #10)
-      test_state_review_watermark.py      # cross-round staleness watermark tests (§13.6 #7-7)
-      test_design_sidecar.py              # ADR-0003 sidecar injection tests (PR #25 step 1/5)
-      test_adr_commit_message.py          # adr --auto-commit subject tests (§13.6 #7-4)
-      test_plan_info_hygiene.py           # HTML-comment strip + plan linter (§13.6 #7-2/#7-5/#7-6)
-      test_adr_width.py                   # _next_adr_number override / detection (§13.6 #7-1)
-      test_coderabbit_rate_limit.py       # is_rate_limit_marker tests (§13.6 #7-8)
-      test_normalize_tests_cmd_env.py     # normalize_tests_command env-adaptation tests (PR #15 dogfood)
-      test_merge_dry_run_rerun.py         # cmd_merge dry-run → real merge tests (§13.6 #7-9)
-      test_debate_format.py               # crewai-debate v3 transcript compliance tests (B4)
-      test_body_embedded_inlines.py       # extract_body_embedded_inlines tests (§13.6 #12)
-      test_rate_limit_helper.py           # _extend_deadline_for_rate_limit contract tests (PR #36 dogfood gen-6)
-      test_review_fetch_body_embedded.py  # cmd_review_fetch §13.6 #12 fallback E2E mock tests (PR #38 dogfood gen-7)
-      test_rate_limit_auto_bypass.py      # B3-1b auto-bypass integration tests (§13.6 #7-8 PR #40)
-      test_rate_limit_auto_bypass_hybrid.py  # B3-1d hybrid dispatch + decline marker tests (§13.6 #7-8 PR #41)
-      test_impl_timeout_override.py       # _resolve_impl_timeout contract tests (§13.15 PR #45)
+  crew-dispatch.sh              # stable shell entrypoint into lib/crew/dispatch.py
+  harness/                      # internal git/PR/review workflow
+    phase.py state.py runner.py coderabbit.py gh.py
+    gc.py
+    checks.sh
+    fixtures/coderabbit/
+    tests/
 docs/
-  adr/                     # Architecture Decision Records (2026-04-25)
-    README.md              # ADR convention + index
-    0001-harness-state-retention-policy.md
-    0002-allow-cmd-merge-re-run-after-dry-run-completion.md  # §13.6 #7-9
-    0003-debate-harness-bridge-via-design-sidecar.md  # debate ↔ harness bridge architecture
+  README.md                     # documentation map and precedence
+  discord/ORCHESTRATION.md      # product architecture
+  adr/                          # Architecture Decision Records
   harness/
-    DESIGN.md              # brainstorm → phase contracts → retrospectives → as-built §14
-    MVP-D-PREVIEW.md       # CodeRabbit research + phase split
-  RUNBOOK.md               # operational procedures (debate + harness + gc)
-state/                     # gitignored scratch (debate + harness/<slug>/)
+    DESIGN.md                   # canonical harness internals
+    ARCHITECTURE.md             # harness diagrams
+    MVP-D-PREVIEW.md            # CodeRabbit research
+  superpowers/                  # historical spike specs/plans/notes
+  RUNBOOK.md                    # operational procedures
+state/
+  crew/<job-id>/                # gitignored product orchestration state
+  harness/<slug>/               # gitignored harness state
 ```
 
 ## Status
 
-- Production: Discord full loop validated 2026-04-20 in `debate-test-v3-3`.
-- CLI: `openclaw agent --session-id ... --input "debate: <topic>"` also works (pre-existing path; always did).
+- Product architecture: Discord-first Director + specialist-agent orchestration.
+- Local controls: Director task graph, lifecycle status refresh, dispatch
+  dependency ordering, worker locks, sweep/resume, artifact handoff, final
+  result generation, and QA/QC gate are implemented under `lib/crew/`.
+- Runtime: OpenClaw gateway is local and healthy; Discord multi-bot channel
+  account configuration is currently absent and remains the service-integration
+  blocker.
+- Debate support: `crewai-debate` v3 Discord loop was previously validated in
+  `debate-test-v3-3`; it is supporting tooling, not the target product surface.
 - Not yet exercised: UE5 workstation integration (msbuild path, real project compile). Dev machine is Linux without UE installed, so all Unreal work is design-only until a macOS/Windows workstation is set up.
 
 ## Crew (master + specialist workers)
 
-A second skill, `crew-master`, runs a Discord roster of specialist workers addressed with `@name` mentions from the `#crew-master` channel. v0.1 ships three workers:
+A second skill, `crew-master`, runs a Discord roster of specialist workers addressed with `@name` mentions from the `#crew-master` channel. The roster is config-driven by `crew/agents.json` (local, gitignored) or `crew/agents.example.json` (fallback). The currently known local channels cover these legacy aliases:
 
 - `@codex-critic` — adversarial Unreal Engine C++ reviewer (Codex CLI)
 - `@claude-coder` — UE5 implementation (Claude Code CLI)
@@ -238,9 +265,30 @@ A second skill, `crew-master`, runs a Discord roster of specialist workers addre
 
 **Mentions recognised:** `@worker <task>` (single dispatch), `@a, @b: <task>` (multi-dispatch), `@source 의 <ref>를 @target 에게 <instruction>` (relay — regex matches for `이슈 #N`, `bullet N`, `N번째 항목`, `방금`/`위`/`직전`), `reset <worker>` (clear that worker's last-reply cache). Workers reply only in their own channels; cross-worker information always flows through the master.
 
-**Dispatch mechanism.** The skill spawns `lib/crew-dispatch.sh` in background. The helper runs `codex exec` or `claude --print` in the worker's persona working directory (under `~/.openclaw/workspace/crew/<role>/`), captures the reply, posts it to the worker's Discord channel, and caches the reply for relay reads at `~/.openclaw/workspace/crew/state/<worker>-last.txt`. Persona is loaded automatically via an `AGENTS.md` (Codex) or `CLAUDE.md` (Claude) symlink in each role's directory that points back to `crew/personas/*.md` in this repo.
+**Dispatch mechanism.** The skill spawns `lib/crew-dispatch.sh` in background. The helper runs `codex exec` or `claude --print` in the worker's persona working directory (under `~/.openclaw/workspace/crew/<role>/`), captures the reply, posts it to the worker's Discord channel through the configured `discord_account_id`, and caches the reply for relay reads at `~/.openclaw/workspace/crew/state/<worker>-last.txt`. Persona is loaded automatically via an `AGENTS.md` (Codex) or `CLAUDE.md` (Claude) symlink in each role's directory that points back to `crew/personas/*.md` in this repo. A per-worker lock prevents overlapping CLI runs in the same persona directory; busy workers are recorded as blocked in `state/crew/<job-id>/job.json`. For job-backed dispatches, `depends_on` is enforced before a worker starts; completed dependency artifacts are appended to the worker prompt.
 
-The `crew-master` channel itself stays on the main OpenClaw agent (no ACP). ACP bindings on the three worker channels are retained so a user posting directly in a worker channel still gets that worker's persona-voiced reply via the normal ACP path — the crew-master flow just doesn't use it.
+Local state inspection:
+
+```bash
+python3 lib/crew/director.py --request "..."
+python3 lib/crew/sweep.py
+python3 lib/crew/sweep.py --json
+python3 lib/crew/finalize.py <job-id>
+python3 lib/crew/gate.py <job-id>
+python3 lib/crew/gate.py <job-id> --require-final-result
+```
+
+`sweep.py` reports `ready` and `blocked_by` for each active task. Run only rows
+whose `ready` value is true; waiting rows become dispatchable after their
+dependencies complete. When all tasks are complete, `sweep.py` points at
+`finalize.py`; finalization writes `artifacts/final.md`, sets
+`final_result_path`, and marks delivery-ready jobs as `delivered`.
+
+The `crew-master` channel itself stays on the main OpenClaw agent. The
+crew-master helper path does not depend on ACP worker-channel bindings because
+it starts the worker CLI directly and then posts the result. If the deployment
+must support direct user messages inside worker channels, add Discord channel
+account configuration and ACP routing bindings as a separate runtime step.
 
 **Why not `openclaw message send` to the worker channel?** Standard Discord bot behaviour: the bot filters its own outgoing messages out of its receive pipeline, so posting task text into a worker channel via `message send` alone would never reach the ACP runtime. The CLI-direct helper is the workaround. See `docs/superpowers/plans/2026-04-20-discord-crew-master-worker-plan.md` §"Design correction" for the full diagnosis.
 
@@ -250,9 +298,15 @@ Setup (one-time):
 openclaw config set acp.enabled true
 openclaw config set acp.backend acpx
 openclaw config set acp.allowedAgents '["codex","claude"]' --strict-json
-# then add a bindings[] entry per worker channel with acp.cwd pointing at
-# ~/.openclaw/workspace/crew/<role>/ (see the plan for the exact array)
 systemctl --user restart openclaw-gateway.service
+```
+
+Discord bot accounts (deployment):
+
+```bash
+openclaw channels add --channel discord --account crewai-bot --name crewai-bot --bot-token "$CREWAI_DISCORD_BOT_TOKEN"
+openclaw channels add --channel discord --account codexai-bot --name codexai-bot --bot-token "$CODEXAI_DISCORD_BOT_TOKEN"
+openclaw channels add --channel discord --account claudeai-bot --name claudeai-bot --bot-token "$CLAUDEAI_DISCORD_BOT_TOKEN"
 ```
 
 Channel IDs are kept in a gitignored `crew/CHANNELS.local.md` scratch file.

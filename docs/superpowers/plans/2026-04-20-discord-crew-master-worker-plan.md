@@ -1,6 +1,13 @@
 # Discord Crew — Master + Specialist Workers Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Archive note (2026-04-29):** This is a historical plan for the original
+> 3-worker spike. Do not resume it as the current product plan. Current source
+> of truth is `docs/discord/ORCHESTRATION.md` plus ADR-0006/0007. The current
+> implementation is config-driven, uses local `state/crew` controls, enforces
+> task dependencies, and the inspected OpenClaw config currently has no Discord
+> channel account or ACP routing bindings.
 
 **Goal:** Deliver a 3-worker Discord crew (`@codex-critic`, `@claude-coder`, `@codex-ue-expert`) driven from `#crew-master` via `@mention` dispatch, with master-relayed cross-worker flow.
 

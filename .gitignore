@@ -5,8 +5,10 @@ __pycache__/
 state/*.json
 !state/.gitkeep
 state/harness/
+state/crew/
 .DS_Store
 crew/CHANNELS.local.md
+crew/agents.json
 .playwright-mcp/
 # Claude Code per-clone session/settings — never committed
 .claude/

@@ -1,0 +1,129 @@
+{
+  "version": 2,
+  "discord_accounts": {
+    "director": {
+      "account_id": "crewai-bot",
+      "bot_name": "crewai-bot",
+      "token_env": "CREWAI_DISCORD_BOT_TOKEN"
+    },
+    "codex": {
+      "account_id": "codexai-bot",
+      "bot_name": "codexai-bot",
+      "token_env": "CODEXAI_DISCORD_BOT_TOKEN"
+    },
+    "claude": {
+      "account_id": "claudeai-bot",
+      "bot_name": "claudeai-bot",
+      "token_env": "CLAUDEAI_DISCORD_BOT_TOKEN"
+    }
+  },
+  "director_channel": {
+    "name": "crew-master",
+    "discord_channel_id": "1496214417363435582",
+    "discord_account_id": "crewai-bot"
+  },
+  "agents": [
+    {
+      "name": "director",
+      "role": "director",
+      "runner": "codex",
+      "discord_channel_id": "1496214417363435582",
+      "discord_account_id": "crewai-bot",
+      "cwd": "/home/hardcoremonk/.openclaw/workspace/crew/director",
+      "persona": "crew/personas/director.md",
+      "timeout_sec": 360,
+      "may_invoke_harness": false
+    },
+    {
+      "name": "planner",
+      "role": "planner",
+      "runner": "codex",
+      "discord_channel_id": "TODO_PLANNER_CHANNEL_ID",
+      "discord_account_id": "codexai-bot",
+      "cwd": "/home/hardcoremonk/.openclaw/workspace/crew/planner",
+      "persona": "crew/personas/product-planner.md",
+      "timeout_sec": 360,
+      "may_invoke_harness": false
+    },
+    {
+      "name": "developer",
+      "role": "developer",
+      "runner": "claude",
+      "discord_channel_id": "1496214589082177718",
+      "discord_account_id": "claudeai-bot",
+      "cwd": "/home/hardcoremonk/.openclaw/workspace/crew/coder",
+      "persona": "crew/personas/coder.md",
+      "timeout_sec": 900,
+      "may_invoke_harness": true,
+      "aliases": ["claude-coder"]
+    },
+    {
+      "name": "designer",
+      "role": "designer",
+      "runner": "codex",
+      "discord_channel_id": "TODO_DESIGNER_CHANNEL_ID",
+      "discord_account_id": "codexai-bot",
+      "cwd": "/home/hardcoremonk/.openclaw/workspace/crew/designer",
+      "persona": "crew/personas/designer.md",
+      "timeout_sec": 360,
+      "may_invoke_harness": false
+    },
+    {
+      "name": "qa",
+      "role": "qa",
+      "runner": "codex",
+      "discord_channel_id": "TODO_QA_CHANNEL_ID",
+      "discord_account_id": "codexai-bot",
+      "cwd": "/home/hardcoremonk/.openclaw/workspace/crew/qa",
+      "persona": "crew/personas/qa.md",
+      "timeout_sec": 600,
+      "may_invoke_harness": false
+    },
+    {
+      "name": "qc",
+      "role": "qc",
+      "runner": "codex",
+      "discord_channel_id": "TODO_QC_CHANNEL_ID",
+      "discord_account_id": "codexai-bot",
+      "cwd": "/home/hardcoremonk/.openclaw/workspace/crew/qc",
+      "persona": "crew/personas/qc.md",
+      "timeout_sec": 360,
+      "may_invoke_harness": false
+    },
+    {
+      "name": "critic",
+      "role": "critic",
+      "runner": "codex",
+      "discord_channel_id": "1496214505301213374",
+      "discord_account_id": "codexai-bot",
+      "cwd": "/home/hardcoremonk/.openclaw/workspace/crew/critic",
+      "persona": "crew/personas/critic.md",
+      "timeout_sec": 360,
+      "may_invoke_harness": false,
+      "aliases": ["codex-critic"]
+    },
+    {
+      "name": "ue-expert",
+      "role": "domain-expert",
+      "runner": "codex",
+      "discord_channel_id": "1496214677602963536",
+      "discord_account_id": "codexai-bot",
+      "cwd": "/home/hardcoremonk/.openclaw/workspace/crew/ue-expert",
+      "persona": "crew/personas/ue-expert.md",
+      "timeout_sec": 360,
+      "may_invoke_harness": false,
+      "aliases": ["codex-ue-expert"]
+    },
+    {
+      "name": "docs-release",
+      "role": "docs-release",
+      "runner": "codex",
+      "discord_channel_id": "TODO_DOCS_RELEASE_CHANNEL_ID",
+      "discord_account_id": "codexai-bot",
+      "cwd": "/home/hardcoremonk/.openclaw/workspace/crew/docs-release",
+      "persona": "crew/personas/docs-release.md",
+      "timeout_sec": 360,
+      "may_invoke_harness": false
+    }
+  ]
+}

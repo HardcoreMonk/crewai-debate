@@ -4,6 +4,11 @@
 > 두 문서가 충돌하면 §14가 옳고, 본 문서를 동기화한다. 본 문서의 6개 다이어그램은
 > 2026-04-25 기준 소스 코드(`lib/harness/*.py`, `skills/crewai-debate-harness/SKILL.md`)
 > 에 직접 grounded. 모든 다이어그램은 GitHub-flavored Mermaid.
+>
+> **제품 방향 주의**: 이 문서는 harness 내부 구조만 설명한다. 사용자-facing
+> 제품 표면은 Discord multi-agent orchestration이며, 그 진원지는
+> `docs/discord/ORCHESTRATION.md`, ADR-0006, ADR-0007, 그리고
+> `docs/README.md`의 문서 우선순위다.
 
 목차:
 1. [System overview — Two-track + 외부 의존성](#1-system-overview)
@@ -17,10 +22,11 @@
 
 ## 1. System overview
 
-**Two cooperating tracks** (Debate + Harness) sharing low-level assets, plus
-GitHub/CodeRabbit/claude-CLI as external dependencies. Discord is the only
-delivery surface that **drops trailing tool calls** — so `crewai-debate-harness`
-(which writes a sidecar via Bash after the debate) is terminal-only by design.
+Harness still shares assets with the Discord/debate track, but from the product
+view it is an internal development workflow. Discord is the service surface and
+also the only delivery surface that **drops trailing tool calls** — so
+`crewai-debate-harness` (which writes a sidecar via Bash after the debate) is
+terminal-only by design.
 
 ```mermaid
 flowchart TB

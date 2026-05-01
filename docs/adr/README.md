@@ -14,6 +14,10 @@
 - **4 섹션 고정**: `## Context` / `## Decision` / `## Consequences` / `## Alternatives considered`
 - 번복·대체 시 새 ADR을 쓰고, 이전 ADR의 Status를 `Superseded by ADR-XXXX (YYYY-MM-DD)`로 업데이트. 본문은 보존(역사적 컨텍스트).
 - ADR 생성은 `phase.py adr <slug>` 또는 `--auto-commit` 자동 commit 사용 (§13.6 #7-4).
+- 제품 방향 ADR은 하네스보다 Discord orchestration 우선순위를 명시한다. 현재
+  제품 표면은 ADR-0006, 로컬 reliability controls는 ADR-0007,
+  Discord multi-bot routing은 ADR-0008을 기준으로 한다.
+- 문서 전체 우선순위와 historical note 분류는 `../README.md`를 따른다.
 
 ## Template
 
@@ -47,3 +51,6 @@
 - [ADR-0003: Bridge crewai-debate to harness via per-task design.md sidecar](0003-debate-harness-bridge-via-design-sidecar.md) — Accepted (2026-04-25)
 - [ADR-0004: Automate silent-ignore recovery via opt-in close+reopen](0004-silent-ignore-recovery-automation.md) — Accepted (2026-04-26)
 - [ADR-0005: Unattended `review-wait` scheduling via systemd `--user` timer](0005-unattended-review-wait-via-systemd-timer.md) — Accepted (2026-04-26)
+- [ADR-0006: Make Discord-first multi-agent orchestration the product surface](0006-discord-first-multi-agent-orchestration.md) — Accepted (2026-04-29)
+- [ADR-0007: Use local crew state controls before Discord delivery](0007-local-crew-state-controls.md) — Accepted (2026-04-29)
+- [ADR-0008: Route Discord delivery through multiple bot accounts](0008-discord-multi-bot-account-routing.md) — Accepted (2026-04-30)

@@ -1,9 +1,15 @@
 # Discord Crew — Master + Specialist Workers Design
 
 **Date:** 2026-04-20
-**Status:** Draft — awaiting user sign-off before writing implementation plan
+**Status:** Historical spike design — superseded by `docs/discord/ORCHESTRATION.md`
 **Author:** hardcoremonk (brainstormed with Claude Opus 4.7)
 **Related:** `skills/crewai-debate/SKILL.md` (v3.2); `memory/project_auto_deliver_override_issue.md` (announce-injection gotchas)
+
+> Current source of truth: `docs/discord/ORCHESTRATION.md`, ADR-0006, and
+> ADR-0007. This document records the original 3-worker Discord crew spike. It
+> still explains useful design pressure, but it predates the config-driven
+> product roster, local crew state, dependency ordering, and the current
+> OpenClaw runtime state where Discord channel account configuration is absent.
 
 ## 1. Problem
 
