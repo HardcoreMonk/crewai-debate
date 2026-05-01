@@ -1,9 +1,11 @@
 # Discord Product Follow-up
 
-**Last updated**: 2026-04-30
+**Last updated**: 2026-05-02
 
 This document is the saved follow-up queue for moving crewai from local
 orchestration controls to a production Discord service.
+
+For the current execution checklist, use `NEXT_STEPS.md`.
 
 ## Current Baseline
 
@@ -19,7 +21,7 @@ Implemented and locally verified:
 - QA/QC delivery gate and final artifact closeout
 - multi-bot Discord account routing via `discord_account_id`
 
-Latest validation on 2026-04-30:
+Latest validation on 2026-05-02:
 
 ```bash
 python3 -m py_compile lib/crew/config.py lib/crew/state.py lib/crew/dispatch.py lib/crew/director.py lib/crew/sweep.py lib/crew/gate.py lib/crew/finalize.py

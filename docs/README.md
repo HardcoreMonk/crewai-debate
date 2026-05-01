@@ -25,6 +25,8 @@ Discord-first multi-agent orchestration.
   architecture.
 - `discord/FOLLOW_UP.md` - saved follow-up queue for Discord product runtime
   setup, multi-bot smoke tests, and remaining service work.
+- `discord/NEXT_STEPS.md` - execution checklist for the next Discord product
+  runtime work.
 - `adr/README.md` - ADR convention and index.
 - `RUNBOOK.md` - local operational procedures.
 
